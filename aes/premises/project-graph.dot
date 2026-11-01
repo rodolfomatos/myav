@@ -1,0 +1,97 @@
+// AES Project Premise Graph
+// Format: Graphviz DOT
+// Convention:
+//   Node types: FOUNDATIONAL | ASSUMPTION | DERIVED | CONSTRAINT
+//   Edge types: DEPENDS_ON | SUPPORTS | CONTRADICTS | CONSTRAINS
+//
+// FOUNDATIONAL - if false, plan collapses
+// ASSUMPTION   - likely true, but not guaranteed
+// DERIVED      - logical consequence of other premises
+// CONSTRAINT   - externally imposed limit
+//
+// Colors:
+//   FOUNDATIONAL: #ff6b6b (red)
+//   ASSUMPTION:   #ffd93d (yellow)
+//   DERIVED:      #6bcb77 (green)
+//   CONSTRAINT:   #4d96ff (blue)
+
+digraph premises {
+    rankdir=TB;
+    compound=true;
+    fontname="monospace";
+    newrank=true;
+    label="Project Premise Graph";
+    fontsize=14;
+    labelloc=t;
+
+    node [style=filled, fontname="monospace", fontsize=11];
+    edge [fontname="monospace", fontsize=9];
+
+    // ── Tier 0: Foundational ─────────────────────────────────────────────────
+    subgraph cluster_foundational {
+        label="Foundational";
+        fontsize=12;
+        style=dashed;
+        color="#ff6b6b";
+
+        "prem_repo_available"
+            [label="Repositório está clonado e acessível", type=FOUNDATIONAL, fillcolor="#ff6b6b", shape=doubleoctagon];
+
+        "prem_css_playwright_truth"
+            [label="CSS: fonte de verdade é a execução do playwright (issue #3)", type=FOUNDATIONAL, fillcolor="#ff6b6b", shape=doubleoctagon];
+    }
+
+    // ── Tier 1: Assumptions ──────────────────────────────────────────────────
+    subgraph cluster_assumptions {
+        label="Assumptions";
+        fontsize=12;
+        style=dashed;
+        color="#ffd93d";
+
+        "prem_lang_available"
+            [label="Linguagem/framework está instalada", type=ASSUMPTION, fillcolor="#ffd93d", shape=ellipse];
+
+        "prem_team_context"
+            [label="Equipa conhece o domínio do problema", type=ASSUMPTION, fillcolor="#ffd93d", shape=ellipse];
+    }
+
+    // ── Tier 2: Constraints ──────────────────────────────────────────────────
+    subgraph cluster_constraints {
+        label="Constraints";
+        fontsize=12;
+        style=dashed;
+        color="#4d96ff";
+
+        "prem_deadline"
+            [label="Prazo definido é exequível", type=CONSTRAINT, fillcolor="#4d96ff", shape=diamond];
+    }
+
+    // ── Tier 3: Derived ──────────────────────────────────────────────────────
+    subgraph cluster_derived {
+        label="Derived";
+        fontsize=12;
+        style=dashed;
+        color="#6bcb77";
+
+        "prem_build_possible"
+            [label="É possível construir o sistema planeado", type=DERIVED, fillcolor="#6bcb77", shape=box];
+
+        "prem_test_possible"
+            [label="É possível testar o sistema", type=DERIVED, fillcolor="#6bcb77", shape=box];
+    }
+
+    // ── Edges ────────────────────────────────────────────────────────────────
+    "prem_repo_available"  -> "prem_build_possible"  [label=DEPENDS_ON];
+    "prem_lang_available"  -> "prem_build_possible"  [label=DEPENDS_ON];
+    "prem_team_context"    -> "prem_build_possible"  [label=SUPPORTS];
+    "prem_deadline"        -> "prem_build_possible"  [label=CONSTRAINS];
+
+    "prem_repo_available"  -> "prem_test_possible"   [label=DEPENDS_ON];
+    "prem_lang_available"  -> "prem_test_possible"   [label=DEPENDS_ON];
+    "prem_build_possible"  -> "prem_test_possible"   [label=SUPPORTS];
+
+    "prem_css_playwright_truth" -> "prem_test_possible" [label=SUPPORTS];
+
+    // ── Implicit edge (link-suggest discovery) ─────────────────────────────
+    "prem_repo_available"  -> "prem_lang_available"   [label=SUPPORTS, style=dashed, color=gray];
+}
