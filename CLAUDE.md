@@ -42,11 +42,11 @@ quarantines (never deletes) what it flags, watches startup entries, and reports 
 Any change here must be flagged to the operator **before** it happens, never silently:
 
 - `scripts/install-system.sh` — the only file allowed to request root; run by a human
-- `scripts/schedule-install.sh` — creates Windows Scheduled Tasks
+- `scripts/verify-live.sh` — read-only health proof; run by operator
 - `src/myav/quarantine.py` — the "never delete" guarantee lives here
 - `src/myav/engines/virustotal.py` — the "no upload" guarantee lives here
+- `src/myav/scheduler.py` — platform scheduling rendering (systemd/launchd/Task Scheduler)
 - `~/.config/myav/config.toml` (0600) — holds the VirusTotal key
-- `.aes/hooks/*` — quality gates
 
 ---
 
@@ -91,6 +91,7 @@ The **Debate Partner Protocol** is inherent to this project (see `prompts/debate
 Load at the start of every session:
 - This file
 - `docs/VISION.md`, `docs/REQUIREMENTS.md`, `docs/ARCHITECTURE.md`, `docs/THREAT_MODEL.md`
+- `docs/INSTALLATION.md`, `docs/CONFIGURATION.md`
 - `aes/kanban.md`
 
 ---

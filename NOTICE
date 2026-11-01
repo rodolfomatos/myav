@@ -1,0 +1,76 @@
+MYAV — My Adaptive Antivirus
+Copyright 2026 Rodolfo Matos
+
+This product includes software developed by third parties. The following notices are
+provided for attribution and licence compliance.
+
+--------------------------------------------------------------------------------
+MYAV itself
+--------------------------------------------------------------------------------
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+--------------------------------------------------------------------------------
+ClamAV
+--------------------------------------------------------------------------------
+ClamAV is an open-source antivirus engine originally developed by Tomasz Kojm and now
+maintained by Cisco Systems, Inc. It is distributed under the GNU General Public License,
+version 2, with the ClamAV virus database under separate terms.
+
+MYAV does not embed ClamAV. It invokes the `clamscan` / `clamdscan` binaries and reads the
+signature database installed by the operating system's package manager. Users are
+responsible for complying with ClamAV's licences when redistributing it.
+
+  https://www.clamav.net/
+  https://github.com/Cisco-Talos/clamav
+
+--------------------------------------------------------------------------------
+YARA
+--------------------------------------------------------------------------------
+YARA is developed by Victor M. Alvarez and contributors, and is distributed under the
+BSD 3-Clause License.
+
+MYAV invokes YARA either through the optional `yara-python` bindings or the `yara` CLI.
+YARA itself is not embedded in this repository.
+
+  https://virustotal.github.io/yara/
+  https://github.com/VirusTotal/yara
+
+--------------------------------------------------------------------------------
+Neo23x0/signature-base (optional YARA rule pack)
+--------------------------------------------------------------------------------
+The optional rule pack is NOT included in this repository and is NOT redistributed by MYAV.
+`myav rules fetch` downloads a pinned commit only after the user explicitly accepts the
+licence with `--accept-license`.
+
+The pack is distributed under the Detection Rule License (DRL) 1.1, which permits free use
+for non-commercial purposes and imposes conditions on redistribution and commercial use.
+Review the licence before commercial deployment.
+
+  https://github.com/Neo23x0/signature-base/blob/master/LICENSE
+
+--------------------------------------------------------------------------------
+watchdog
+--------------------------------------------------------------------------------
+`watchdog` is distributed under the Apache License, Version 2.0.
+  https://github.com/gorakhargosh/watchdog
+
+--------------------------------------------------------------------------------
+tomli
+--------------------------------------------------------------------------------
+`tomli` is distributed under the MIT License.
+  https://github.com/hukkin/tomli
+
+--------------------------------------------------------------------------------
+EICAR test file
+--------------------------------------------------------------------------------
+The EICAR antivirus test string is a standard, harmless test artefact published by the
+European Institute for Computer Antivirus Research. It is used by `myav selftest` to prove
+the detection chain. It is not malware and cannot execute.
+
+  https://www.eicar.org/download-anti-malware-testfile/
+
+--------------------------------------------------------------------------------
+Python
+--------------------------------------------------------------------------------
+Python is distributed under the Python Software Foundation License Version 2.
+  https://www.python.org/

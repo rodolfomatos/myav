@@ -1,0 +1,145 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:6c1c2f9e-6f2a-4f7a-9d1e-2a0f7b3c4d51",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-11-01T00:00:00Z",
+    "tools": [
+      {
+        "vendor": "myav",
+        "name": "manual-sbom",
+        "version": "0.1.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:generic/myav@0.1.0",
+      "name": "myav",
+      "version": "0.1.0",
+      "description": "Local-first antivirus: ClamAV + YARA + optional VirusTotal hash lookups, with reversible quarantine.",
+      "licenses": [
+        { "license": { "id": "Apache-2.0" } }
+      ],
+      "purl": "pkg:generic/myav@0.1.0"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/watchdog@5.0.3",
+      "name": "watchdog",
+      "version": ">=3.0,<6.0",
+      "description": "Filesystem event monitoring (inotify, FSEvents, ReadDirectoryChangesW).",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:pypi/watchdog",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/tomli@2.2.1",
+      "name": "tomli",
+      "version": ">=2.0,<3.0",
+      "description": "TOML parser for Python < 3.11. Replaced by stdlib tomllib on 3.11+.",
+      "licenses": [{ "license": { "id": "MIT" } }],
+      "purl": "pkg:pypi/tomli",
+      "scope": "required",
+      "properties": [
+        { "name": "myav:python-marker", "value": "python_version < '3.11'" }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/yara-python",
+      "name": "yara-python",
+      "version": "optional, detected at runtime",
+      "description": "Optional in-process YARA binding. Falls back to the yara CLI.",
+      "licenses": [{ "license": { "id": "Apache-2.0" } }],
+      "purl": "pkg:pypi/yara-python",
+      "scope": "optional"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pytest",
+      "name": "pytest",
+      "version": "development only",
+      "licenses": [{ "license": { "id": "MIT" } }],
+      "purl": "pkg:pypi/pytest",
+      "scope": "excluded"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pytest-cov",
+      "name": "pytest-cov",
+      "version": "development only",
+      "licenses": [{ "license": { "id": "MIT" } }],
+      "purl": "pkg:pypi/pytest-cov",
+      "scope": "excluded"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/ruff",
+      "name": "ruff",
+      "version": "development only",
+      "licenses": [{ "license": { "id": "MIT" } }],
+      "purl": "pkg:pypi/ruff",
+      "scope": "excluded"
+    },
+    {
+      "type": "application",
+      "bom-ref": "pkg:generic/clamav",
+      "name": "ClamAV",
+      "version": "system package, 1.5.x expected on Ubuntu 22.04",
+      "description": "Signature antivirus engine invoked as clamscan/clamdscan. Not embedded.",
+      "licenses": [{ "license": { "id": "GPL-2.0-only" } }],
+      "scope": "required",
+      "externalReferences": [
+        { "type": "website", "url": "https://www.clamav.net/" }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "pkg:generic/yara",
+      "name": "YARA",
+      "version": "system package, 4.1.3 expected on Ubuntu 22.04",
+      "description": "Pattern matching engine invoked as yara/yarac. Not embedded.",
+      "licenses": [{ "license": { "id": "BSD-3-Clause" } }],
+      "scope": "required",
+      "externalReferences": [
+        { "type": "website", "url": "https://virustotal.github.io/yara/" }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "pkg:generic/signature-base",
+      "name": "Neo23x0/signature-base",
+      "version": "pinned commit, fetched at runtime",
+      "description": "Optional YARA rule pack. Not vendored, not redistributed. Downloaded only after the user accepts DRL 1.1.",
+      "licenses": [{ "license": { "name": "Detection Rule License 1.1" } }],
+      "scope": "optional",
+      "externalReferences": [
+        { "type": "vcs", "url": "https://github.com/Neo23x0/signature-base" }
+      ],
+      "properties": [
+        { "name": "myav:provenance", "value": "rules/PROVENANCE.json records commit and archive SHA-256" }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:generic/myav@0.1.0",
+      "dependsOn": [
+        "pkg:pypi/watchdog@5.0.3",
+        "pkg:pypi/tomli@2.2.1",
+        "pkg:generic/clamav",
+        "pkg:generic/yara"
+      ]
+    }
+  ],
+  "properties": [
+    {
+      "name": "myav:notes",
+      "value": "This SBOM is maintained by hand and committed to the repository. It is not yet generated per release; see docs/DEPENDENCIES.md section 8."
+    }
+  ]
+}

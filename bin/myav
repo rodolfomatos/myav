@@ -1,0 +1,40 @@
+#!/bin/sh
+# myav launcher.
+#
+# Why this file exists: myav is a Python program, but every scheduled task, systemd unit
+# and documentation page needs one stable command to call. This script finds a Python
+# interpreter, points it at the source tree, and hands over.
+#
+# It deliberately does NOT use sudo. If a command needs root, myav says so and stops;
+# you decide.
+
+set -eu
+
+# Resolve the directory this script lives in, following symlinks (e.g. /usr/local/bin/myav).
+target=$0
+while [ -L "$target" ]; do
+  link=$(readlink "$target")
+  case $link in
+    /*) target=$link ;;
+    *) target=$(dirname "$target")/$link ;;
+  esac
+done
+here=$(cd "$(dirname "$target")" && pwd)
+root=$(cd "$here/.." && pwd)
+
+# Order matters: the project's own virtualenv first (pinned dependencies), then the
+# system interpreter.
+if [ -x "$root/.venv/bin/python" ]; then
+  python=$root/.venv/bin/python
+elif command -v python3 >/dev/null 2>&1; then
+  python=$(command -v python3)
+elif command -v python >/dev/null 2>&1; then
+  python=$(command -v python)
+else
+  echo "myav: no Python 3 interpreter found. Install Python 3.10 or newer." >&2
+  exit 3
+fi
+
+PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec "$python" -m myav "$@"

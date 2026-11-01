@@ -3,15 +3,38 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aes-project"
+name = "myav"
 version = "0.1.0"
-description = "AES-managed Python project"
+description = "Local open-source antivirus for WSL: ClamAV + YARA + hash reputation, reversible quarantine"
+requires-python = ">=3.10"
+dependencies = [
+    "watchdog>=3.0,<6.0",
+    "tomli>=2.0,<3.0; python_version < '3.11'",
+]
+
+[project.scripts]
+myav = "myav.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=src --cov-report=xml --cov-report=term"
+addopts = "--cov=myav --cov-report=term-missing --cov-fail-under=80"
 pythonpath = ["src"]
+markers = [
+    "slow: touches the real machine (clamd, interop, scheduler)",
+]
+
+[tool.coverage.run]
+branch = true
 
 [tool.ruff]
-line-length = 88
-select = ["E", "F", "W", "I"]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

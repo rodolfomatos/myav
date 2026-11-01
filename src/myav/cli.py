@@ -1,0 +1,1143 @@
+"""Command-line interface.
+
+Design rules for this file:
+
+* it dispatches, it does not decide policy — the modules do;
+* every command that needs a capability asks the platform adapter first;
+* nothing runs ``sudo``; when root is required the command explains and exits 3;
+* exit codes are part of the contract (docs/ARCHITECTURE.md §3 and docs/RUNBOOK.md):
+
+  ====  ==========================================================
+  0     success / everything clean
+  1     command failed
+  2     usage error (bad arguments, unknown ID)
+  3     this platform cannot do that / root is required
+  4     configuration is invalid or unsafe
+  5     self-test inconclusive (e.g. Windows Defender removed EICAR)
+  10    at least one file MALICIOUS
+  11    at least one file SUSPICIOUS
+  12    at least one file UNKNOWN (evidence missing)
+  ====  ==========================================================
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+from . import __version__, bootwatch
+from .config import Config, ConfigError, write_api_key
+from .paths import (
+    Paths,
+    UnsafeLocationError,
+    default_paths,
+    ensure_dirs,
+)
+from .pipeline import Engines, Outcome, build_engines, default_scope, scan_targets
+from .platforms import Capability, Platform, detect_platform
+from .quarantine import Quarantine, QuarantineError
+from .report import ReportContext, build_context, render_report, write_report
+from .rules import RulesError
+from .rules import fetch as fetch_rules
+from .rules import status as rules_status
+from .scheduler import install as install_artifacts
+from .scheduler import render as render_schedules
+from .scheduler import status as schedule_status
+from .selftest import run_eicar_selftest
+from .state import State
+from .util import display_path, format_bytes, human_age
+from .watcher import Watcher
+
+EXIT_OK = 0
+EXIT_FAIL = 1
+EXIT_USAGE = 2
+EXIT_PLATFORM = 3
+EXIT_CONFIG = 4
+EXIT_INCONCLUSIVE = 5
+EXIT_MALICIOUS = 10
+EXIT_SUSPICIOUS = 11
+EXIT_UNKNOWN = 12
+
+_LEVEL_RANK = {"CLEAN": 0, "UNKNOWN": 1, "SUSPICIOUS": 2, "MALICIOUS": 3}
+_LEVEL_EXIT = {
+    "CLEAN": EXIT_OK,
+    "UNKNOWN": EXIT_UNKNOWN,
+    "SUSPICIOUS": EXIT_SUSPICIOUS,
+    "MALICIOUS": EXIT_MALICIOUS,
+}
+
+
+class CapabilityError(RuntimeError):
+    """The platform cannot do what was asked. Carries exit code 3."""
+
+
+# --------------------------------------------------------------------------- context
+
+
+@dataclass
+class Context:
+    config: Config
+    paths: Paths
+    state: State
+    platform: Platform
+
+    def engines(self) -> Engines:
+        return build_engines(self.config, self.paths, self.state, self.platform)
+
+
+def make_context(create_dirs: bool = True) -> Context:
+    paths = default_paths()
+    config = Config.load()
+    platform = detect_platform()
+    if create_dirs:
+        ensure_dirs(paths)
+    state = State(paths.state_db)
+    return Context(config=config, paths=paths, state=state, platform=platform)
+
+
+def require(ctx: Context, capability: Capability, command: str) -> None:
+    if not ctx.platform.supports(capability):
+        raise CapabilityError(
+            f"`myav {command}` is not available on {ctx.platform.label}. {ctx.platform.notes}"
+        )
+
+
+# ------------------------------------------------------------------------- formatting
+
+
+def _emit(payload: dict) -> None:
+    print(json.dumps(payload, indent=2, default=str))
+
+
+def _worst(outcomes: list[Outcome]) -> str:
+    level = "CLEAN"
+    for outcome in outcomes:
+        candidate = outcome.level
+        if _LEVEL_RANK[candidate] > _LEVEL_RANK[level]:
+            level = candidate
+    return level
+
+
+def _outcome_line(outcome: Outcome) -> str:
+    if outcome.skipped:
+        return f"{'SKIP':<10} {display_path(outcome.path)} — {outcome.skipped}"
+    detail = ""
+    if outcome.verdict:
+        fired = [r for r in outcome.verdict.results if r.fired]
+        detail = ", ".join(f"{r.engine}: {r.signature or r.status}" for r in fired)
+    if outcome.quarantined:
+        detail = (detail + " " if detail else "") + f"[quarantined {outcome.quarantined.id[:8]}]"
+    if outcome.error:
+        detail = (detail + " " if detail else "") + outcome.error
+    return f"{outcome.level:<10} {display_path(outcome.path)}" + (f" — {detail}" if detail else "")
+
+
+def _print_outcomes(outcomes: list[Outcome], quiet: bool = False) -> None:
+    if quiet:
+        return
+    for outcome in outcomes:
+        print(_outcome_line(outcome))
+    counts: dict[str, int] = {}
+    for outcome in outcomes:
+        key = "skipped" if outcome.skipped else outcome.level
+        counts[key] = counts.get(key, 0) + 1
+    summary = ", ".join(f"{count} {name.lower()}" for name, count in sorted(counts.items()))
+    print("")
+    print(f"{len(outcomes)} file(s): {summary or 'nothing to do'}")
+
+
+def _outcome_payload(command: str, outcomes: list[Outcome], **extra) -> dict:
+    worst = _worst(outcomes)
+    return {
+        "command": command,
+        "exit_code": _LEVEL_EXIT[worst],
+        "verdict": worst,
+        "files": len(outcomes),
+        "results": [outcome.as_dict() for outcome in outcomes],
+        **extra,
+    }
+
+
+# ---------------------------------------------------------------------------- version
+
+
+def cmd_version(args: argparse.Namespace) -> int:
+    platform = detect_platform()
+    text = f"myav {__version__} (Python {sys.version.split()[0]}, {platform.label})"
+    if args.json:
+        _emit(
+            {
+                "name": "myav",
+                "version": __version__,
+                "python": sys.version.split()[0],
+                "platform": platform.key,
+                "platform_label": platform.label,
+            }
+        )
+    else:
+        print(text)
+    return EXIT_OK
+
+
+def cmd_platforms(args: argparse.Namespace) -> int:
+    """Show every adapter and what it can do. Useful before promising a platform."""
+    current = detect_platform()
+    rows = []
+    for key in ("linux", "wsl", "macos", "windows", "android", "ios"):
+        platform = detect_platform(env={**os.environ, "MYAV_PLATFORM": key})
+        rows.append(platform)
+    if args.json:
+        _emit(
+            {
+                "current": current.key,
+                "platforms": [
+                    {**platform.as_dict(), "current": platform.key == current.key}
+                    for platform in rows
+                ],
+            }
+        )
+        return EXIT_OK
+    print(f"current platform: {current.label} ({current.key})")
+    print("")
+    print(f"{'key':<9} {'scheduler':<15} {'capabilities'}")
+    print(f"{'-' * 9} {'-' * 15} {'-' * 40}")
+    for platform in rows:
+        mark = "*" if platform.key == current.key else " "
+        caps = ", ".join(sorted(capability.value for capability in platform.capabilities)) or "none"
+        print(f"{mark}{platform.key:<8} {platform.scheduler:<15} {caps}")
+    print("")
+    print("* = this machine. Capabilities are enforced: unavailable commands exit 3.")
+    return EXIT_OK
+
+
+# ----------------------------------------------------------------------------- doctor
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    checks: list[tuple[str, str, str]] = []
+
+    def add(status: str, label: str, detail: str = "") -> None:
+        checks.append((status, label, detail))
+
+    python_ok = sys.version_info >= (3, 10)
+    add("ok" if python_ok else "fail", "Python >= 3.10", sys.version.split()[0])
+
+    add(
+        "ok" if ctx.platform.family != "unknown" else "fail",
+        "Platform adapter",
+        f"{ctx.platform.label} ({ctx.platform.key})",
+    )
+
+    bad_modes = []
+    for directory in ctx.paths.all_dirs():
+        try:
+            mode = directory.stat().st_mode & 0o777
+        except OSError as exc:
+            bad_modes.append(f"{directory}: {exc}")
+            continue
+        if mode & 0o077:
+            bad_modes.append(f"{display_path(directory)} is {mode:04o}")
+    add("ok" if not bad_modes else "warn", "Private directories (0700)", "; ".join(bad_modes))
+
+    clam = ctx.engines().clamav
+    signature = clam.signature_info()
+    if not clam.available():
+        add("fail", "ClamAV", "not installed — run scripts/install-system.sh (see docs/INSTALL.md)")
+    elif not signature.available:
+        add("warn", "ClamAV", signature.detail or "version unknown")
+    else:
+        age = signature.age
+        status = "warn" if signature.stale else "ok"
+        add(
+            status,
+            "ClamAV signatures",
+            f"version {signature.db_version}, "
+            f"age {human_age(age.total_seconds()) if age else 'unknown'}",
+        )
+
+    yara_binary = shutil.which("yara")
+    ystat = rules_status(ctx.paths)
+    if not yara_binary:
+        add("warn", "YARA", "yara not installed — YARA stage will be skipped")
+    elif not ystat["rule_files"]:
+        add("warn", "YARA rules", "none fetched — run `myav rules fetch --accept-license`")
+    else:
+        add(
+            "ok", "YARA rules", f"{ystat['rule_files']} files, compiled={ystat.get('cache_exists')}"
+        )
+
+    vt = ctx.config.virustotal
+    if vt.enabled and vt.api_key:
+        add("ok", "VirusTotal", "hash-only lookups enabled")
+    else:
+        add("warn", "VirusTotal", "not configured (optional) — see docs/CONFIGURATION.md")
+
+    free = shutil.disk_usage(str(ctx.paths.state_dir)).free
+    add("ok" if free > 1024**3 else "warn", "Free space for quarantine", format_bytes(free))
+
+    if ctx.platform.is_wsl:
+        windows = Path("/mnt/c")
+        if windows.exists():
+            c_free = shutil.disk_usage(str(windows)).free
+            add(
+                "warn" if c_free < 1024**3 else "ok",
+                "Windows C: free space",
+                f"{format_bytes(c_free)} (myav never writes there)",
+            )
+        systemd = _systemd_state()
+        add("ok" if systemd != "offline" else "warn", "systemd", systemd)
+    else:
+        add("ok", "Scheduler", ctx.platform.scheduler)
+
+    install_state = schedule_status(ctx.platform, _install_root(), _user())
+    installed = install_state.get("installed", [])
+    add(
+        "ok" if installed else "warn",
+        "Scheduled jobs",
+        ", ".join(installed) if installed else "not installed — run `myav schedules install`",
+    )
+
+    failed = sum(1 for status, _label, _detail in checks if status == "fail")
+    warned = sum(1 for status, _label, _detail in checks if status == "warn")
+
+    if args.json:
+        _emit(
+            {
+                "command": "doctor",
+                "exit_code": EXIT_FAIL if failed else EXIT_OK,
+                "failed": failed,
+                "warned": warned,
+                "checks": [
+                    {"status": status, "check": label, "detail": detail}
+                    for status, label, detail in checks
+                ],
+            }
+        )
+        return EXIT_FAIL if failed else EXIT_OK
+
+    print("myav doctor")
+    print("")
+    for status, label, detail in checks:
+        mark = {"ok": "OK  ", "warn": "WARN", "fail": "FAIL"}[status]
+        print(f"{mark}  {label}" + (f": {detail}" if detail else ""))
+    print("")
+    if failed:
+        print(f"{failed} problem(s) must be fixed before myav can protect this machine.")
+    elif warned:
+        print(f"Healthy, with {warned} warning(s). Read docs/RUNBOOK.md for what each means.")
+    else:
+        print("Everything myav depends on is present and fresh.")
+    return EXIT_FAIL if failed else EXIT_OK
+
+
+# ----------------------------------------------------------------------------- config
+
+
+def cmd_config(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    if args.action == "path":
+        print(ctx.paths.config_file)
+        return EXIT_OK
+
+    if args.action == "show":
+        payload = ctx.config.public_dict(redact=not args.reveal)
+        if args.json:
+            _emit({"command": "config-show", **payload})
+        else:
+            print(json.dumps(payload, indent=2, default=str))
+        return EXIT_OK
+
+    # set-vt-key
+    key = args.key
+    if not key:
+        key = os.environ.get("MYAV_VT_API_KEY", "").strip()
+    if not key:
+        print(
+            "Paste your VirusTotal API key (it is not echoed, and it never leaves this "
+            "machine except as the x-apikey header on hash lookups).\n"
+            "Get one free at https://www.virustotal.com/gui/my-apikey — docs/CONFIGURATION.md "
+            "walks through it."
+        )
+        try:
+            import getpass
+
+            key = getpass.getpass("API key: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled; nothing was written.")
+            return EXIT_USAGE
+    key = key.strip()
+    if len(key) != 64 or any(character not in "0123456789abcdefABCDEF" for character in key):
+        print(
+            "That does not look like a VirusTotal API key. A VT key is exactly 64 "
+            "hexadecimal characters (0-9, a-f). Nothing was written.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    target = write_api_key(ctx.paths, key)
+    print(f"Wrote {target} (mode 0600).")
+    print("VirusTotal will now be asked about file *hashes* only — never file contents.")
+    print("Check with: myav doctor")
+    return EXIT_OK
+
+
+# ------------------------------------------------------------------------------- scan
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    require(ctx, Capability.SCAN_FILES, "scan")
+    targets = [Path(item).expanduser() for item in args.paths]
+    missing = [target for target in targets if not target.exists()]
+    if missing:
+        for target in missing:
+            print(f"myav: no such file or directory: {target}", file=sys.stderr)
+        return EXIT_USAGE
+
+    engines = ctx.engines()
+    started = _now()
+    outcomes = list(
+        scan_targets(
+            targets,
+            ctx.config,
+            ctx.paths,
+            ctx.state,
+            engines,
+            kind=args.kind,
+            dry_run=args.dry_run,
+        )
+    )
+    if args.report:
+        context = build_context(
+            kind=args.kind,
+            started=started,
+            outcomes=outcomes,
+            engines=engines,
+            state=ctx.state,
+            scope=targets,
+        )
+        _finish_report(ctx, context)
+    if args.json:
+        _emit(_outcome_payload("scan", outcomes))
+    else:
+        _print_outcomes(outcomes)
+        if args.dry_run:
+            print("dry run: nothing was quarantined")
+    return _LEVEL_EXIT[_worst(outcomes)]
+
+
+def cmd_full_scan(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    require(ctx, Capability.SCAN_FILES, "full-scan")
+    if args.paths:
+        targets = [Path(item).expanduser() for item in args.paths]
+    else:
+        targets = default_scope(ctx.config, ctx.platform)
+    existing = [target for target in targets if target.exists()]
+    if not existing:
+        print(
+            "Nothing to scan: none of the configured folders exist "
+            f"({', '.join(display_path(t) for t in targets) or 'no scope'}).",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+
+    engines = ctx.engines()
+    started = _now()
+    outcomes = list(
+        scan_targets(
+            existing,
+            ctx.config,
+            ctx.paths,
+            ctx.state,
+            engines,
+            kind="full",
+            dry_run=args.dry_run,
+        )
+    )
+    context = build_context(
+        kind="full",
+        started=started,
+        outcomes=outcomes,
+        engines=engines,
+        state=ctx.state,
+        scope=existing,
+    )
+    target = _finish_report(ctx, context)
+    if args.json:
+        _emit(_outcome_payload("full-scan", outcomes, report=str(target)))
+    else:
+        print(render_report(context))
+        print(f"Report saved to {display_path(target)}")
+    return _LEVEL_EXIT[_worst(outcomes)]
+
+
+def _finish_report(ctx: Context, context: ReportContext) -> Path:
+    target = write_report(ctx.paths, context)
+    prune = getattr(ctx.config.report, "retention", 0)
+    if prune:
+        from .report import prune_reports
+
+        prune_reports(ctx.paths, prune)
+    return target
+
+
+# ------------------------------------------------------------------------------ rules
+
+
+def cmd_rules(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    if args.action == "status":
+        payload = rules_status(ctx.paths)
+        if args.json:
+            _emit({"command": "rules-status", **payload})
+        else:
+            print(f"rules directory: {payload['rules_dir']}")
+            print(f"rule files:      {payload['rule_files']}")
+            print(f"compiled cache:  {'yes' if payload['cache_exists'] else 'no'}")
+            if payload.get("commit"):
+                print(f"pinned commit:   {payload['commit']}")
+                print(f"archive sha256:  {payload.get('archive_sha256', '')[:16]}…")
+                print(f"licence:         {payload.get('license', '')}")
+            else:
+                print("provenance:      missing — run `myav rules fetch --accept-license`")
+        return EXIT_OK
+
+    result = fetch_rules(ctx.paths, accept_license=args.accept_license, update=args.update)
+    if args.json:
+        _emit({"command": "rules-fetch", **result})
+    else:
+        if result.get("changed"):
+            print(
+                f"Fetched {result['rule_files']} rule files from "
+                f"{result['repo']}@{result['commit'][:12]}"
+            )
+            print(f"archive sha256: {result['archive_sha256']}")
+            compile_info = result.get("compile", {})
+            if compile_info.get("compiled"):
+                print(f"compiled {compile_info.get('rules', 0)} rule file(s) into a YARA cache")
+            else:
+                print(f"not compiled: {compile_info.get('reason', 'unknown reason')}")
+            skipped = result.get("skipped_rules", [])
+            if skipped:
+                print(
+                    f"{len(skipped)} rule file(s) failed to compile and were "
+                    "skipped (kept on disk):"
+                )
+                for item in skipped[:5]:
+                    print(f"  - {item['file']}: {item['error'][:80]}")
+        else:
+            print("Rules are already pinned. Use --update to fetch a newer pack.")
+    return EXIT_OK
+
+
+# ------------------------------------------------------------------------- quarantine
+
+
+def cmd_quarantine(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    require(ctx, Capability.QUARANTINE, "quarantine")
+    quarantine = Quarantine(ctx.paths, ctx.state, ctx.config)
+
+    if args.action == "list":
+        records = ctx.state.list_quarantines(include_restored=args.all)
+        if args.json:
+            _emit(
+                {
+                    "command": "quarantine-list",
+                    "records": [record.__dict__ for record in records],
+                }
+            )
+            return EXIT_OK
+        if not records:
+            print("Quarantine is empty. Nothing has been moved.")
+            return EXIT_OK
+        print(f"{'id':<10} {'state':<9} {'tag':<10} {'size':>8}  original location")
+        print(f"{'-' * 10} {'-' * 9} {'-' * 10} {'-' * 8}  {'-' * 40}")
+        for record in records:
+            print(
+                f"{record.id[:8]:<10} {record.state:<9} {record.tag:<10} "
+                f"{format_bytes(record.size):>8}  {display_path(Path(record.original_path))}"
+            )
+        print("")
+        print("Restore one with: myav quarantine restore <id>")
+        return EXIT_OK
+
+    if args.action == "restore":
+        target = Path(args.to).expanduser() if args.to else None
+        restored = quarantine.restore(args.id, target=target, force=args.force)
+        print(f"Restored to {restored}")
+        print("The file was hash-verified before and after the restore.")
+        return EXIT_OK
+
+    # purge
+    removed = quarantine.purge(args.id, yes=args.yes)
+    if removed:
+        print(f"Deleted quarantine entry {args.id}. This action cannot be undone.")
+        return EXIT_OK
+    return EXIT_OK
+
+
+# -------------------------------------------------------------------------- allowlist
+
+
+def cmd_allow(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    if args.action == "list":
+        rows = ctx.state.list_allowlist()
+        if not rows:
+            print("Allowlist is empty.")
+            return EXIT_OK
+        for row in rows:
+            print(f"{row['sha256'][:16]}…  {row['path'] or '-'}  {row['reason'] or ''}")
+        return EXIT_OK
+
+    from .hashutil import sha256_file
+
+    target = Path(args.path).expanduser()
+    if not target.is_file():
+        print(f"myav: not a regular file: {target}", file=sys.stderr)
+        return EXIT_USAGE
+    digest = sha256_file(target)
+    ctx.state.allow(digest, str(target.absolute()), args.reason or "")
+    print(f"Allowlisted {display_path(target)}")
+    print(f"sha256 {digest}")
+    print("Future scans of this exact content will be CLEAN. Delete the file to revoke.")
+    return EXIT_OK
+
+
+# ----------------------------------------------------------------------------- report
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=False)
+    reports = sorted(ctx.paths.reports_dir.glob("*.md"))
+    if args.list:
+        if not reports:
+            print("No reports yet. Run `myav full-scan`.")
+            return EXIT_OK
+        for path in reports:
+            print(display_path(path))
+        return EXIT_OK
+    if not reports:
+        print("No reports yet. Run `myav full-scan`.", file=sys.stderr)
+        return EXIT_FAIL
+    target = reports[-1] if not args.path else Path(args.path).expanduser()
+    if not target.exists():
+        print(f"myav: no such report: {target}", file=sys.stderr)
+        return EXIT_USAGE
+    print(target.read_text(encoding="utf-8"))
+    return EXIT_OK
+
+
+# ------------------------------------------------------------------------------- boot
+
+
+def cmd_boot(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    require(ctx, Capability.STARTUP_INVENTORY, "boot")
+    result = bootwatch.check(ctx.state, ctx.platform)
+    new = result["new"]
+    if args.json:
+        _emit({"command": "boot", **result, "exit_code": EXIT_SUSPICIOUS if new else EXIT_OK})
+        return EXIT_SUSPICIOUS if new else EXIT_OK
+
+    print(f"Startup entries seen: {result['entries']}")
+    if result["first_run"]:
+        print("First run: this is now the baseline. Nothing is flagged yet.")
+    elif new:
+        print("")
+        print("NEW since the last check — look at these:")
+        for entry in new:
+            print(f"  + {entry['name']}  ({entry['location']})")
+            if entry.get("command"):
+                print(f"    {entry['command']}")
+    else:
+        print("No new startup entries since the last check.")
+    if result["removed"]:
+        print(f"{len(result['removed'])} entry(ies) disappeared (uninstalled, or disabled).")
+    for note in result["notes"]:
+        print(f"note: {note}")
+    print("")
+    print("myav never disables a startup entry. Decide yourself; docs/RUNBOOK.md explains how.")
+    return EXIT_SUSPICIOUS if new else EXIT_OK
+
+
+# ------------------------------------------------------------------------------ watch
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    require(ctx, Capability.WATCH_FILES, "watch")
+    engines = ctx.engines()
+    watcher = Watcher(ctx.config, ctx.paths, ctx.state, engines, ctx.platform)
+    started = _now()
+    stats = watcher.run(once=args.once, create_dirs=args.create_dirs)
+    outcomes = list(stats.outcomes)
+
+    context = build_context(
+        kind="watch",
+        started=started,
+        outcomes=outcomes,
+        engines=engines,
+        state=ctx.state,
+        scope=stats.roots,
+        extra_attention=[f"watcher: {stats.dropped} event(s) dropped (queue full)"]
+        if stats.dropped
+        else [],
+    )
+    target = _finish_report(ctx, context)
+    if args.json:
+        _emit(
+            {
+                "command": "watch",
+                "exit_code": _LEVEL_EXIT[_worst(outcomes)] if outcomes else EXIT_OK,
+                "roots": [str(root) for root in stats.roots],
+                "queued": stats.queued,
+                "scanned": stats.scanned,
+                "errors": stats.errors,
+                "dropped": stats.dropped,
+                "report": str(target),
+                "results": [outcome.as_dict() for outcome in outcomes],
+            }
+        )
+    else:
+        print(f"Watched: {', '.join(display_path(root) for root in stats.roots) or 'nothing'}")
+        print(f"Scanned {stats.scanned} file(s), {stats.errors} error(s), {stats.dropped} dropped.")
+        if outcomes:
+            _print_outcomes(outcomes)
+        print(f"Report: {display_path(target)}")
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------- selftest
+
+
+def cmd_selftest(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    engines = ctx.engines()
+    result = run_eicar_selftest(ctx.config, ctx.paths, ctx.state, engines)
+    if args.json:
+        _emit({"command": "selftest", **result.as_dict(), "exit_code": result.exit_code})
+    else:
+        print(result.render())
+        if result.inconclusive:
+            print("")
+            print(
+                "This is not a myav bug. Read the INCONCLUSIVE line above before changing anything."
+            )
+    return result.exit_code
+
+
+# ------------------------------------------------------------------ system/privileged
+
+
+def cmd_update_signatures(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    freshclam = shutil.which("freshclam")
+    if not freshclam:
+        print(
+            "freshclam is not installed. Run scripts/install-system.sh (docs/INSTALL.md).",
+            file=sys.stderr,
+        )
+        return EXIT_PLATFORM
+
+    systemd = _systemd_state()
+    if systemd not in {"offline", "unknown"} and not args.no_service:
+        completed = subprocess.run(
+            ["systemctl", "start", "clamav-freshclam"], capture_output=True, text=True
+        )
+        if completed.returncode != 0:
+            print(
+                "Could not start clamav-freshclam through systemd; "
+                "falling back to direct freshclam.",
+                file=sys.stderr,
+            )
+    else:
+        completed = subprocess.run([freshclam], capture_output=True, text=True)
+
+    output = (completed.stdout or "").strip()
+    error = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        if "permission" in error.lower() or "denied" in error.lower():
+            print(
+                "freshclam needs to write the system signature database, which requires root.\n"
+                "Ask the operator to run:  sudo myav update-signatures\n"
+                "myav itself never runs sudo.",
+                file=sys.stderr,
+            )
+        else:
+            print(error[-800:] or output[-800:] or "freshclam failed", file=sys.stderr)
+        return EXIT_FAIL
+
+    info = ctx.engines().clamav.signature_info()
+    if args.json:
+        _emit({"command": "update-signatures", "exit_code": EXIT_OK, **info.as_dict()})
+    else:
+        tail = "\n".join(output.splitlines()[-5:])
+        if tail:
+            print(tail)
+        if info.available:
+            print(f"Signatures: version {info.db_version}")
+        print("Signature update finished.")
+    return EXIT_OK
+
+
+def cmd_clamd_start(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    require(ctx, Capability.DAEMON, "clamd-start")
+
+    if _daemon_reachable(ctx):
+        print("clamd is already answering on 127.0.0.1:3310.")
+        return EXIT_OK
+
+    systemd = _systemd_state()
+    if systemd not in {"offline", "unknown"}:
+        completed = subprocess.run(
+            ["systemctl", "start", "clamav-daemon"], capture_output=True, text=True
+        )
+        if completed.returncode == 0 and _daemon_reachable(ctx):
+            print("clamd started through systemd (clamav-daemon).")
+            return EXIT_OK
+        if completed.returncode != 0:
+            print(
+                "systemd could not start clamav-daemon. If this says 'permission denied', "
+                "the operator must run: sudo myav clamd-start",
+                file=sys.stderr,
+            )
+
+    clamd = shutil.which("clamd") or "/usr/sbin/clamd"
+    if not Path(clamd).exists():
+        print(
+            "clamd is not installed. Run scripts/install-system.sh (docs/INSTALL.md).",
+            file=sys.stderr,
+        )
+        return EXIT_PLATFORM
+    completed = subprocess.run([clamd], capture_output=True, text=True)
+    if completed.returncode == 0 and _daemon_reachable(ctx):
+        print("clamd started.")
+        return EXIT_OK
+    error = (completed.stderr or "").strip()
+    if "permission" in error.lower():
+        print("Root is required. Ask the operator to run:  sudo myav clamd-start", file=sys.stderr)
+    else:
+        print(error[-800:] or "clamd did not start", file=sys.stderr)
+    return EXIT_FAIL
+
+
+# ---------------------------------------------------------------------------- schedules
+
+
+def cmd_schedules(args: argparse.Namespace) -> int:
+    ctx = make_context(create_dirs=True)
+    require(ctx, Capability.SCHEDULER, "schedules")
+    artifacts = render_schedules(
+        ctx.platform, _install_root(), _user(), _distro(), binary=_binary()
+    )
+    if args.action == "print":
+        if not artifacts:
+            print(f"{ctx.platform.label} has no scheduler adapter.")
+            return EXIT_PLATFORM
+        for artifact in artifacts:
+            print(f"# --- {artifact.label} ---")
+            if artifact.path:
+                print(f"# file: {artifact.path}")
+            if artifact.needs_root:
+                print("# needs root: yes (myav prints, never writes)")
+            print(artifact.content)
+            if artifact.activate:
+                print(f"# activate: {artifact.activate}")
+            print("")
+        return EXIT_OK
+
+    if args.action == "install":
+        actions = install_artifacts(artifacts, yes=args.yes)
+        for action in actions:
+            print(action)
+        if not args.yes:
+            print("")
+            print("Nothing was written. Re-run with --yes to install the user-level jobs.")
+        return EXIT_OK
+
+    payload = schedule_status(ctx.platform, _install_root(), _user())
+    if args.json:
+        _emit({"command": "schedules-status", **payload})
+        return EXIT_OK
+    print(f"scheduler: {payload['scheduler']}")
+    installed = payload.get("installed", [])
+    if installed:
+        for name in installed:
+            print(f"  installed: {name}")
+    else:
+        print("  nothing installed yet — `myav schedules install --yes`")
+    if payload.get("note"):
+        print(f"  note: {payload['note']}")
+    return EXIT_OK
+
+
+# ------------------------------------------------------------------------------- inner
+
+
+def cmd_inner(args: argparse.Namespace) -> int:
+    """Quiet entry point used by schedulers. Output goes to a log, not a console."""
+    mapping = {
+        "clamd-start": "clamd-start",
+        "update-sigs": "update-signatures",
+        "watch-loop": "watch",
+        "full-scan": "full-scan",
+        "boot": "boot",
+    }
+    command = mapping.get(args.inner_command, args.inner_command)
+    ctx = make_context(create_dirs=True)
+    log_path = ctx.paths.logs_dir / f"inner-{command}.log"
+    with open(log_path, "a", encoding="utf-8") as handle:
+        handle.write(f"\n=== {datetime.now(timezone.utc).isoformat()} {command} ===\n")
+        handle.flush()
+        with contextlib.redirect_stdout(handle), contextlib.redirect_stderr(handle):
+            return main([command, *args.rest])
+
+
+# ---------------------------------------------------------------------------- helpers
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _systemd_state() -> str:
+    if not shutil.which("systemctl"):
+        return "offline"
+    try:
+        completed = subprocess.run(
+            ["systemctl", "is-system-running"], capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return (completed.stdout or completed.stderr or "unknown").strip().splitlines()[0]
+
+
+def _daemon_reachable(ctx: Context) -> bool:
+    try:
+        with socket.create_connection(
+            (ctx.config.clamav.tcp_host, ctx.config.clamav.tcp_port), timeout=1.0
+        ):
+            return True
+    except OSError:
+        pass
+    socket_path = Path(ctx.config.clamav.local_socket)
+    return socket_path.exists()
+
+
+def _install_root() -> Path:
+    candidate = Path(__file__).resolve().parents[2]
+    if (candidate / "bin" / "myav").exists():
+        return candidate
+    return Path.cwd()
+
+
+def _binary() -> Path:
+    root = _install_root()
+    candidate = root / "bin" / "myav"
+    if candidate.exists():
+        return candidate
+    found = shutil.which("myav")
+    return Path(found) if found else Path("myav")
+
+
+def _user() -> str:
+    return os.environ.get("USER") or os.environ.get("USERNAME") or "user"
+
+
+def _distro() -> str:
+    return os.environ.get("WSL_DISTRO_NAME", "Ubuntu")
+
+
+# ------------------------------------------------------------------------------ parser
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="myav",
+        description=(
+            "Local open-source antivirus: ClamAV + YARA + optional VirusTotal hash checks, "
+            "with reversible quarantine. Nothing is ever deleted without your confirmation."
+        ),
+        epilog="Documentation: docs/INSTALL.md, docs/CONFIGURATION.md, docs/RUNBOOK.md.",
+    )
+    parser.add_argument("--version", action="version", version=f"myav {__version__}")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def add(name: str, func, help_text: str) -> argparse.ArgumentParser:
+        child = sub.add_parser(name, help=help_text, description=help_text)
+        child.set_defaults(func=func)
+        return child
+
+    version = add("version", cmd_version, "Show the version and the detected platform.")
+    version.add_argument("--json", action="store_true")
+
+    platforms = add("platforms", cmd_platforms, "Show every platform adapter and its capabilities.")
+    platforms.add_argument("--json", action="store_true")
+
+    doctor = add("doctor", cmd_doctor, "Check every dependency and say what is missing.")
+    doctor.add_argument("--json", action="store_true")
+
+    config = add("config", cmd_config, "Show or edit myav configuration.")
+    config_sub = config.add_subparsers(dest="action", required=True)
+    show = config_sub.add_parser("show", help="Print the effective configuration.")
+    show.add_argument("--json", action="store_true")
+    show.add_argument("--reveal", action="store_true", help="Show the full VirusTotal key.")
+    show.set_defaults(func=cmd_config, action="show")
+    path = config_sub.add_parser("path", help="Print the config file location.")
+    path.set_defaults(func=cmd_config, action="path")
+    set_key = config_sub.add_parser(
+        "set-vt-key", help="Store a VirusTotal API key with 0600 permissions."
+    )
+    set_key.add_argument(
+        "--key", help="The 64-character key (otherwise read from MYAV_VT_API_KEY or a prompt)."
+    )
+    set_key.set_defaults(func=cmd_config, action="set-vt-key")
+
+    scan = add("scan", cmd_scan, "Scan specific files or folders now.")
+    scan.add_argument("paths", nargs="+", help="Files or folders to scan.")
+    scan.add_argument(
+        "--kind", default="manual", help="Label stored with each scan (default: manual)."
+    )
+    scan.add_argument("--dry-run", action="store_true", help="Detect but do not quarantine.")
+    scan.add_argument("--report", action="store_true", help="Also write a markdown report file.")
+    scan.add_argument("--json", action="store_true")
+
+    full = add(
+        "full-scan", cmd_full_scan, "Scan the default scope and write a plain-English report."
+    )
+    full.add_argument("paths", nargs="*", help="Override the default scope.")
+    full.add_argument("--dry-run", action="store_true", help="Detect but do not quarantine.")
+    full.add_argument("--json", action="store_true")
+
+    rules = add("rules", cmd_rules, "Fetch or inspect the public YARA rule pack.")
+    rules_sub = rules.add_subparsers(dest="action", required=True)
+    rules_fetch = rules_sub.add_parser("fetch", help="Download and compile the pinned rule pack.")
+    rules_fetch.add_argument(
+        "--accept-license", action="store_true", help="Accept the DRL 1.1 licence."
+    )
+    rules_fetch.add_argument(
+        "--update", action="store_true", help="Fetch a newer pack even if pinned."
+    )
+    rules_fetch.add_argument("--json", action="store_true")
+    rules_fetch.set_defaults(func=cmd_rules, action="fetch")
+    rules_status_cmd = rules_sub.add_parser("status", help="Show provenance and rule counts.")
+    rules_status_cmd.add_argument("--json", action="store_true")
+    rules_status_cmd.set_defaults(func=cmd_rules, action="status")
+
+    quarantine = add(
+        "quarantine", cmd_quarantine, "List, restore or (explicitly) delete quarantined files."
+    )
+    quarantine_sub = quarantine.add_subparsers(dest="action", required=True)
+    q_list = quarantine_sub.add_parser("list", help="List quarantined files.")
+    q_list.add_argument("--all", action="store_true", help="Include already-restored entries.")
+    q_list.add_argument("--json", action="store_true")
+    q_list.set_defaults(func=cmd_quarantine, action="list")
+    q_restore = quarantine_sub.add_parser("restore", help="Put a quarantined file back.")
+    q_restore.add_argument("id", help="Quarantine ID (first 8 characters are enough).")
+    q_restore.add_argument("--to", help="Restore somewhere other than the original path.")
+    q_restore.add_argument("--force", action="store_true", help="Overwrite an existing file.")
+    q_restore.set_defaults(func=cmd_quarantine, action="restore")
+    q_purge = quarantine_sub.add_parser("purge", help="Delete a quarantined file permanently.")
+    q_purge.add_argument("id")
+    q_purge.add_argument("--yes", action="store_true", help="Required. There is no undo.")
+    q_purge.set_defaults(func=cmd_quarantine, action="purge")
+
+    allow = add("allow", cmd_allow, "Manage the sha256 allowlist (false-positive escape hatch).")
+    allow_sub = allow.add_subparsers(dest="action", required=True)
+    allow_list = allow_sub.add_parser("list", help="Show allowlisted hashes.")
+    allow_list.set_defaults(func=cmd_allow, action="list")
+    allow_add = allow_sub.add_parser("add", help="Allowlist one file by content hash.")
+    allow_add.add_argument("path")
+    allow_add.add_argument("--reason", default="")
+    allow_add.set_defaults(func=cmd_allow, action="add")
+
+    report = add("report", cmd_report, "Print the most recent report, or list all reports.")
+    report.add_argument("--list", action="store_true", help="List report files.")
+    report.add_argument("--path", help="Print a specific report file.")
+
+    boot = add("boot", cmd_boot, "List startup entries and flag new ones.")
+    boot.add_argument("--json", action="store_true")
+
+    watch = add("watch", cmd_watch, "Watch Downloads, Desktop and removable volumes.")
+    watch.add_argument("--once", action="store_true", help="Scan what is already there, then exit.")
+    watch.add_argument("--create-dirs", action="store_true", help="Create missing watch folders.")
+    watch.add_argument("--json", action="store_true")
+
+    selftest = add(
+        "selftest", cmd_selftest, "Prove the whole chain with the harmless EICAR test file."
+    )
+    selftest.add_argument("--json", action="store_true")
+
+    update = add(
+        "update-signatures",
+        cmd_update_signatures,
+        "Update ClamAV signatures (needs root on Linux).",
+    )
+    update.add_argument(
+        "--no-service", action="store_true", help="Skip systemd, call freshclam directly."
+    )
+    update.add_argument("--json", action="store_true")
+
+    clamd = add("clamd-start", cmd_clamd_start, "Start clamd, the fast on-access scanner daemon.")
+    clamd.add_argument("--json", action="store_true")
+
+    schedules = add("schedules", cmd_schedules, "Print, install or inspect the recurring jobs.")
+    schedules_sub = schedules.add_subparsers(dest="action", required=True)
+    s_print = schedules_sub.add_parser(
+        "print", help="Show the files/commands that would be installed."
+    )
+    s_print.set_defaults(func=cmd_schedules, action="print")
+    s_install = schedules_sub.add_parser("install", help="Write the user-level scheduler files.")
+    s_install.add_argument("--yes", action="store_true", help="Actually write them.")
+    s_install.set_defaults(func=cmd_schedules, action="install")
+    s_status = schedules_sub.add_parser("status", help="Show what is installed.")
+    s_status.add_argument("--json", action="store_true")
+    s_status.set_defaults(func=cmd_schedules, action="status")
+
+    inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")
+    inner.add_argument("inner_command")
+    inner.add_argument("rest", nargs=argparse.REMAINDER)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+    try:
+        return int(args.func(args))
+    except CapabilityError as exc:
+        print(f"myav: {exc}", file=sys.stderr)
+        return EXIT_PLATFORM
+    except ConfigError as exc:
+        print(f"myav: configuration problem: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    except RulesError as exc:
+        print(f"myav: {exc}", file=sys.stderr)
+        return EXIT_FAIL
+    except QuarantineError as exc:
+        print(f"myav: {exc}", file=sys.stderr)
+        return exc.code or EXIT_FAIL
+    except UnsafeLocationError as exc:
+        print(f"myav: refusing unsafe location: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    except KeyboardInterrupt:
+        print("\nmyav: interrupted. Nothing was deleted.", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())
