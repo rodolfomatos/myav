@@ -1,25 +1,32 @@
 # Personas
 
-## User
+## P1 — The operator (primary, and only user in v1)
 
-**Profile:** [Describe your user]
+Owns the machine, runs the AI agent, is technical but not an antivirus specialist.
+Wants: *"tell me plainly whether something bad landed here, and never lose my files."*
 
-**Goals:**
-- Goal 1
-- Goal 2
+Needs:
+- A verdict in plain English, with the evidence behind it.
+- A guaranteed undo path for any quarantine action.
+- To know when the tool is degraded (stale signatures, engine down, VT unconfigured).
+- To be asked before anything privileged or irreversible happens.
 
-**Pain Points:**
-- Pain 1
-- Pain 2
+Frustrations to avoid:
+- Silent failures ("scanned 0 files" reported as success).
+- Jargon-only output (`Heuristics.Trojan.Script.Generic` with no explanation).
+- Being told to "just disable Defender" to make a test pass.
 
-## Maintainer
+## P2 — The AI agent (secondary)
 
-**Profile:** Engineer maintaining this codebase
+Operates the repo, writes code, runs non-privileged commands.
+Wants: deterministic commands, machine-readable output, and hard boundaries so it
+cannot destroy user data or change system settings by accident.
 
-**Goals:**
-- Keep code clean and documented
-- Ensure quality without friction
+Needs:
+- `--json` on every read command.
+- Exit codes that distinguish clean / suspicious / malicious / error.
+- Explicit prohibition (enforced by tests, not prose) on delete paths and network uploads.
 
-**Tools:**
-- AES (Ambrósio Engineering System)
-- `make check` for validation
+## P3 — Future collaborator (deferred)
+
+Would contribute YARA rules or engine adapters. Not a v1 target; no plugin API yet.

@@ -16,3 +16,12 @@ env/
 .tmp/
 aes/verification/
 .llm_venv/
+
+# myav
+.venv/
+rules/*.yar
+rules/*.yara
+rules/*.yarc
+rules/signature-base/
+.testtmp/
+*.local.toml
