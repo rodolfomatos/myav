@@ -1156,6 +1156,8 @@ def cmd_research(args: argparse.Namespace) -> int:
     ships as MYAV Core protection. See docs/RESEARCH_TRACK.md."""
     if args.action == "fp-baseline":
         return _cmd_research_fp_baseline(args)
+    if args.action == "behaviour-baseline":
+        return _cmd_research_behaviour_baseline(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1257,6 +1259,105 @@ def _cmd_research_fp_baseline(args: argparse.Namespace) -> int:
         print(
             f"  {c.false_negative} malicious file(s) were not flagged by any engine."
         )
+    return EXIT_OK
+
+
+def _cmd_research_behaviour_baseline(args: argparse.Namespace) -> int:
+    """Learn a behaviour baseline from *directory* and/or check current
+    activity against a previously learned baseline.
+
+    Read-only: scans the directory with dry-run semantics (nothing quarantined,
+    nothing mutated) and reports deviations from the learned baseline. Never
+    blocks.
+    """
+    directory = Path(args.directory).expanduser()
+    if not directory.is_dir():
+        print(
+            f"myav: not a directory: {directory}", file=sys.stderr
+        )
+        return EXIT_USAGE
+
+    if args.learn and args.check:
+        print(
+            "myav: specify only one of --learn or --check", file=sys.stderr
+        )
+        return EXIT_USAGE
+    if not args.learn and not args.check:
+        print(
+            "myav: specify --learn or --check", file=sys.stderr
+        )
+        return EXIT_USAGE
+
+    ctx = make_context(create_dirs=True)
+    engines = ctx.engines()
+
+    from .research.behaviour_baseline import run_behaviour_baseline
+
+    result = run_behaviour_baseline(
+        directory,
+        ctx.config,
+        ctx.paths,
+        ctx.state,
+        engines,
+        learn=args.learn,
+        check=args.check,
+    )
+
+    if args.json:
+        payload = {
+            "command": "research-behaviour-baseline",
+            "directory": str(directory.resolve()),
+            "learn": args.learn,
+            "check": args.check,
+            "baseline_learned": result.baseline_learned,
+            "total_observations": result.total_observations,
+            "deviation_count": result.deviation_count,
+            "deviation_rate": round(result.deviation_rate, 4),
+        }
+        if result.baseline:
+            payload["baseline"] = result.baseline.to_dict()
+        if result.deviations:
+            payload["deviations"] = [
+                {"type": d.type, "value": d.value} for d in result.deviations
+            ]
+        _emit(payload)
+        return EXIT_OK
+
+    if args.learn:
+        b = result.baseline
+        print(f"Behaviour baseline learned: {directory.resolve()}")
+        print(f"  Observations:  {result.total_observations}")
+        print(f"  Processes:     {', '.join(sorted(b.processes)) or 'none'}")
+        print(f"  Hours:         {', '.join(str(h) for h in sorted(b.hours)) or 'none'}")
+        print(f"  Directories:   {len(b.directories)} unique")
+        print(f"  Connections:   {len(b.connections)} unique")
+        print(f"  Modified files:{len(b.modified_files)} unique")
+        print("")
+        print(
+            "This is a research baseline, not a detection verdict. "
+            "Use `myav research behaviour-baseline --check` to compare "
+            "future activity against it."
+        )
+        return EXIT_OK
+
+    # check
+    b = result.baseline
+    print(f"Behaviour baseline check: {directory.resolve()}")
+    print(f"  Observations:  {result.total_observations}")
+    print(f"  Deviations:    {result.deviation_count}")
+    print(f"  Deviation rate:{result.deviation_rate:.2f}%")
+    print("")
+    if result.deviations:
+        print("Deviations from baseline:")
+        for d in result.deviations:
+            print(f"  {d.type:<20} {d.value}")
+    else:
+        print("No deviations from baseline.")
+    print("")
+    print(
+        "This is a research measurement, not a detection verdict. "
+        "Deviations are alerts only — nothing is blocked."
+    )
     return EXIT_OK
 
 
@@ -1710,6 +1811,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     research_fp.add_argument("--json", action="store_true")
     research_fp.set_defaults(func=cmd_research, action="fp-baseline")
+
+    research_behaviour = research_sub.add_parser(
+        "behaviour-baseline",
+        help="Learn a behaviour baseline and/or check activity against it.",
+    )
+    research_behaviour.add_argument(
+        "directory", help="Directory to observe activity from (read-only)."
+    )
+    research_behaviour.add_argument(
+        "--learn",
+        action="store_true",
+        help="Learn a baseline from the directory's activity.",
+    )
+    research_behaviour.add_argument(
+        "--check",
+        action="store_true",
+        help="Check current activity against a previously learned baseline.",
+    )
+    research_behaviour.add_argument("--json", action="store_true")
+    research_behaviour.set_defaults(
+        func=cmd_research, action="behaviour-baseline"
+    )
 
     inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")
     inner.add_argument("inner_command")

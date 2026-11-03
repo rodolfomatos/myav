@@ -663,6 +663,133 @@ def test_research_fp_baseline_malicious_dir_not_a_directory(fake, tmp_path, caps
     ]) == 2
 
 
+# ------------------------------------------------------------------- research behaviour-baseline
+
+
+def test_research_behaviour_baseline_learn(fake, tmp_path, capsys) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("hello")
+    (corpus / "b.py").write_text("print(1)")
+
+    assert cli.main(["research", "behaviour-baseline", str(corpus), "--learn"]) == 0
+    out = capsys.readouterr().out
+    assert "Behaviour baseline learned" in out
+    assert "Observations:  2" in out
+    assert "process-txt" in out
+    assert "process-py" in out
+
+
+def test_research_behaviour_baseline_check_no_deviations(
+    fake, tmp_path, capsys
+) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("hello")
+
+    cli.main(["research", "behaviour-baseline", str(corpus), "--learn"])
+    capsys.readouterr()  # discard learn output
+
+    assert cli.main(["research", "behaviour-baseline", str(corpus), "--check"]) == 0
+    out = capsys.readouterr().out
+    assert "Behaviour baseline check" in out
+    assert "Deviations:    0" in out
+    assert "No deviations from baseline." in out
+
+
+def test_research_behaviour_baseline_check_with_deviations(
+    fake, tmp_path, capsys
+) -> None:
+    corpus1 = tmp_path / "corpus1"
+    corpus1.mkdir()
+    (corpus1 / "a.txt").write_text("hello")
+
+    corpus2 = tmp_path / "corpus2"
+    corpus2.mkdir()
+    (corpus2 / "b.py").write_text("print(1)")
+    (corpus2 / "c.sh").write_text("#!/bin/bash")
+
+    cli.main(["research", "behaviour-baseline", str(corpus1), "--learn"])
+    capsys.readouterr()  # discard learn output
+
+    assert cli.main(["research", "behaviour-baseline", str(corpus2), "--check"]) == 0
+    out = capsys.readouterr().out
+    assert "Behaviour baseline check" in out
+    assert "Deviations:    6" in out
+    assert "new_process" in out
+    assert "new_directory" in out
+    assert "new_modified_file" in out
+
+
+def test_research_behaviour_baseline_check_without_baseline(
+    fake, tmp_path, capsys
+) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("hello")
+
+    assert cli.main(["research", "behaviour-baseline", str(corpus), "--check"]) == 0
+    out = capsys.readouterr().out
+    assert "Deviations:    0" in out
+
+
+def test_research_behaviour_baseline_learn_json(fake, tmp_path, capsys) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("hello")
+
+    assert cli.main(["research", "behaviour-baseline", str(corpus), "--learn", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "research-behaviour-baseline"
+    assert payload["learn"] is True
+    assert payload["check"] is False
+    assert payload["baseline_learned"] is True
+    assert payload["total_observations"] == 1
+    assert payload["deviation_count"] == 0
+    assert "process-txt" in payload["baseline"]["processes"]
+
+
+def test_research_behaviour_baseline_check_json(fake, tmp_path, capsys) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("hello")
+
+    cli.main(["research", "behaviour-baseline", str(corpus), "--learn"])
+    capsys.readouterr()  # discard learn output
+
+    assert cli.main(["research", "behaviour-baseline", str(corpus), "--check", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "research-behaviour-baseline"
+    assert payload["learn"] is False
+    assert payload["check"] is True
+    assert payload["baseline_learned"] is False
+    assert payload["total_observations"] == 1
+    assert payload["deviation_count"] == 0
+    assert payload["deviation_rate"] == 0.0
+
+
+def test_research_behaviour_baseline_not_a_directory(fake, capsys) -> None:
+    assert cli.main(["research", "behaviour-baseline", "/nonexistent/path", "--learn"]) == 2
+
+
+def test_research_behaviour_baseline_no_action(fake, tmp_path, capsys) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("hello")
+
+    assert cli.main(["research", "behaviour-baseline", str(corpus)]) == 2
+
+
+def test_research_behaviour_baseline_both_actions(fake, tmp_path, capsys) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("hello")
+
+    assert cli.main([
+        "research", "behaviour-baseline", str(corpus), "--learn", "--check",
+    ]) == 2
+
+
 # ----------------------------------------------------------------------- quarantine
 
 

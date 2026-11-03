@@ -3,7 +3,7 @@ ticket: T028
 title: User behaviour baseline — what is normal on this machine
 sprint: research-01
 priority: high
-status: pending
+status: done
 created: 2026-11-03
 ---
 
