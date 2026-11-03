@@ -1148,6 +1148,76 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
+# --------------------------------------------------------------------- research
+
+
+def cmd_research(args: argparse.Namespace) -> int:
+    """Research-track commands. These are measurement tools only — nothing here
+    ships as MYAV Core protection. See docs/RESEARCH_TRACK.md."""
+    if args.action == "fp-baseline":
+        return _cmd_research_fp_baseline(args)
+    print(f"myav: unknown research action: {args.action}", file=sys.stderr)
+    return EXIT_USAGE
+
+
+def _cmd_research_fp_baseline(args: argparse.Namespace) -> int:
+    """Measure the false-positive rate on a corpus of known-good files.
+
+    Read-only: scans every file under ``args.directory`` with dry-run semantics
+    (nothing quarantined, nothing mutated) and reports the false-positive rate.
+    A temporary state database is used so the user's real state is untouched.
+    """
+    directory = Path(args.directory).expanduser()
+    if not directory.is_dir():
+        print(
+            f"myav: not a directory: {directory}", file=sys.stderr
+        )
+        return EXIT_USAGE
+
+    ctx = make_context(create_dirs=True)
+    engines = ctx.engines()
+
+    from .research.fp_baseline import scan_directory_for_false_positives
+
+    result = scan_directory_for_false_positives(
+        directory, ctx.config, ctx.paths, engines
+    )
+
+    if args.json:
+        payload = {
+            "command": "research-fp-baseline",
+            "directory": result.directory,
+            "total_scanned": result.total_scanned,
+            "false_positives": result.false_positives,
+            "false_positive_rate": round(result.false_positive_rate, 4),
+            "skipped": result.skipped,
+            "flagged": result.flagged,
+        }
+        _emit(payload)
+        return EXIT_OK
+
+    print(f"False-positive baseline: {result.directory}")
+    print(f"  Files scanned:   {result.total_scanned}")
+    print(f"  Files skipped:   {result.skipped}")
+    print(f"  False positives: {result.false_positives}")
+    print(f"  FP rate:         {result.false_positive_rate:.2f}%")
+    print("")
+    print(
+        "This is a research measurement, not a detection verdict. "
+        "A file flagged here may be a false positive or a real detection; "
+        "inspect each one before concluding."
+    )
+    if result.flagged:
+        print("")
+        print("Flagged files:")
+        for item in result.flagged:
+            print(
+                f"  {item['level']:<11} {item['path']}  "
+                f"({item['evidence']})  sha256:{item['sha256']}…"
+            )
+    return EXIT_OK
+
+
 # ------------------------------------------------------------------ system/privileged
 
 
@@ -1580,6 +1650,20 @@ def build_parser() -> argparse.ArgumentParser:
     s_status = schedules_sub.add_parser("status", help="Show what is installed.")
     s_status.add_argument("--json", action="store_true")
     s_status.set_defaults(func=cmd_schedules, action="status")
+
+    research = add(
+        "research", cmd_research, "Research-track measurement tools (not protection)."
+    )
+    research_sub = research.add_subparsers(dest="action", required=True)
+    research_fp = research_sub.add_parser(
+        "fp-baseline",
+        help="Measure the false-positive rate on a directory of known-good files.",
+    )
+    research_fp.add_argument(
+        "directory", help="Directory of known-good files to scan (read-only)."
+    )
+    research_fp.add_argument("--json", action="store_true")
+    research_fp.set_defaults(func=cmd_research, action="fp-baseline")
 
     inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")
     inner.add_argument("inner_command")

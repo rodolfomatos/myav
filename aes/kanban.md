@@ -1,7 +1,7 @@
 ---
 project: myav
 created: 2026-11-01
-current_sprint: sprint-04
+current_sprint: research-01
 current_ticket: none
 tier: AES-heavy
 ---
@@ -58,6 +58,7 @@ tier: AES-heavy
 | T023 | --json for every command | `pytest` (306 pass), `ruff` clean, coverage 91.73% |
 | T024 | Per-file progress line for long full scans | `pytest` (309 pass), `ruff` clean, coverage 91.72% |
 | T025 | Visual progress bar for long full scans | `pytest` (318 pass), `ruff` clean, coverage 91.62% |
+| T026 | False-positive baseline study (research track) | `pytest` (326 pass), `ruff` clean, coverage 91.67% |
 
 ## Blocked
 
@@ -81,3 +82,4 @@ tier: AES-heavy
 | 2026-11-01 | T010 | Reports reconcile counts; sections: What ran, What was scanned, What was found, What is quarantined, Needs your attention, How to read this report. |
 | 2026-11-01 | T003/T006 | Config: `ENFORCE_POSIX_MODES = os.name != "nt"` — Windows uses per-user ACLs, not mode bits; fixes native-Windows config rejection. |
 | 2026-11-01 | T005 | `write_api_key` now correctly inserts into existing bare `[virustotal]` section via `_set_vt_section`. |
+| 2026-11-03 | T026 | Research track unlocked: `verify-live.sh` → HEALTHY on 2026-11-03. Research track charter created (`docs/RESEARCH_TRACK.md`). First research measurement: false-positive baseline study (`myav research fp-baseline`), answering open question O3 from research-review.md §8. Key lesson: `EngineResult.fired` is a computed property of `status`, not a constructor field — passing `fired=` raises TypeError caught by `_safe_engine`, producing UNKNOWN verdicts.

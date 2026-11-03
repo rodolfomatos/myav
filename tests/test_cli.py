@@ -15,7 +15,7 @@ from conftest import StubClam, make_engines
 
 from myav import cli
 from myav.config import ConfigError
-from myav.engine import MALICIOUS
+from myav.engine import CLEAN, MALICIOUS, EngineResult
 from myav.paths import ensure_dirs
 from myav.pipeline import Outcome
 from myav.quarantine import Quarantine, QuarantineError
@@ -514,6 +514,67 @@ def test_report_json(fake, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["command"] == "report"
     assert "# test report" in payload["content"]
+
+
+# ------------------------------------------------------------------- research
+
+
+def test_research_fp_baseline_clean(fake, tmp_path, capsys) -> None:
+    corpus = tmp_path / "clean-corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("hello world")
+    (corpus / "b.txt").write_text("clean file")
+
+    assert cli.main(["research", "fp-baseline", str(corpus)]) == 0
+    out = capsys.readouterr().out
+    assert "False-positive baseline" in out
+    assert "False positives: 0" in out
+    assert "FP rate:         0.00%" in out
+
+
+def test_research_fp_baseline_with_eicar(fake, tmp_path, capsys, monkeypatch) -> None:
+    corpus = tmp_path / "mixed-corpus"
+    corpus.mkdir()
+    (corpus / "clean.txt").write_text("hello world")
+    eicar = corpus / "eicar.com"
+    eicar.write_text(
+        "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+    )
+
+    from myav.engine import MALICIOUS, EngineResult
+
+    def eicar_scan(self, path: Path) -> EngineResult:
+        if path.name.lower().startswith("eicar"):
+            return EngineResult(
+                engine="clamav", status=MALICIOUS, signature="Eicar-Test",
+                primary=True,
+            )
+        return EngineResult(engine="clamav", status=CLEAN, primary=True)
+
+    monkeypatch.setattr(fake._engines.clamav, "scan", eicar_scan.__get__(fake._engines.clamav))
+
+    assert cli.main(["research", "fp-baseline", str(corpus)]) == 0
+    out = capsys.readouterr().out
+    assert "False positives: 1" in out
+    assert "FP rate:         50.00%" in out
+    assert "eicar.com" in out
+
+
+def test_research_fp_baseline_json(fake, tmp_path, capsys) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("clean")
+
+    assert cli.main(["research", "fp-baseline", str(corpus), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "research-fp-baseline"
+    assert payload["total_scanned"] == 1
+    assert payload["false_positives"] == 0
+    assert payload["false_positive_rate"] == 0.0
+
+
+def test_research_fp_baseline_not_a_directory(fake, capsys) -> None:
+    assert cli.main(["research", "fp-baseline", "/nonexistent/path"]) == 2
 
 
 # ----------------------------------------------------------------------- quarantine
