@@ -1161,11 +1161,13 @@ def cmd_research(args: argparse.Namespace) -> int:
 
 
 def _cmd_research_fp_baseline(args: argparse.Namespace) -> int:
-    """Measure the false-positive rate on a corpus of known-good files.
+    """Measure the false-positive rate on a corpus of known-good files, and
+    optionally the false-negative rate on a corpus of known-bad files.
 
-    Read-only: scans every file under ``args.directory`` with dry-run semantics
-    (nothing quarantined, nothing mutated) and reports the false-positive rate.
-    A temporary state database is used so the user's real state is untouched.
+    Read-only: scans directories with dry-run semantics (nothing quarantined,
+    nothing mutated) and reports false-positive rate, false-negative rate and
+    a confusion matrix. A temporary state database is used so the user's real
+    state is untouched.
     """
     directory = Path(args.directory).expanduser()
     if not directory.is_dir():
@@ -1174,47 +1176,87 @@ def _cmd_research_fp_baseline(args: argparse.Namespace) -> int:
         )
         return EXIT_USAGE
 
+    malicious_dir = None
+    if args.malicious_dir is not None:
+        malicious_dir = Path(args.malicious_dir).expanduser()
+        if not malicious_dir.is_dir():
+            print(
+                f"myav: not a directory: {malicious_dir}", file=sys.stderr
+            )
+            return EXIT_USAGE
+
     ctx = make_context(create_dirs=True)
     engines = ctx.engines()
 
-    from .research.fp_baseline import scan_directory_for_false_positives
+    from .research.fp_baseline import measure_fp_fn
 
-    result = scan_directory_for_false_positives(
-        directory, ctx.config, ctx.paths, engines
+    result = measure_fp_fn(
+        directory,
+        ctx.config,
+        ctx.paths,
+        engines,
+        malicious_dir=malicious_dir,
     )
 
+    c = result.confusion
     if args.json:
         payload = {
             "command": "research-fp-baseline",
-            "directory": result.directory,
-            "total_scanned": result.total_scanned,
-            "false_positives": result.false_positives,
-            "false_positive_rate": round(result.false_positive_rate, 4),
-            "skipped": result.skipped,
-            "flagged": result.flagged,
+            "clean_dir": result.clean_dir,
+            "malicious_dir": result.malicious_dir,
+            "total_scanned": c.total,
+            "true_negative": c.true_negative,
+            "false_positive": c.false_positive,
+            "false_negative": c.false_negative,
+            "true_positive": c.true_positive,
+            "false_positive_rate": round(c.false_positive_rate, 4),
+            "false_negative_rate": round(c.false_negative_rate, 4),
+            "precision": round(c.precision, 4),
+            "recall": round(c.recall, 4),
+            "clean_details": result.clean_details,
+            "malicious_details": result.malicious_details,
         }
         _emit(payload)
         return EXIT_OK
 
-    print(f"False-positive baseline: {result.directory}")
-    print(f"  Files scanned:   {result.total_scanned}")
-    print(f"  Files skipped:   {result.skipped}")
-    print(f"  False positives: {result.false_positives}")
-    print(f"  FP rate:         {result.false_positive_rate:.2f}%")
+    print(f"Honest measurement: {result.clean_dir}")
+    if result.malicious_dir:
+        print(f"Malicious corpus:   {result.malicious_dir}")
+    print("")
+    print("Confusion matrix:")
+    print(f"  True negative  (clean, not flagged):  {c.true_negative}")
+    print(f"  False positive (clean, flagged):      {c.false_positive}")
+    print(f"  False negative (malicious, missed):   {c.false_negative}")
+    print(f"  True positive  (malicious, flagged):  {c.true_positive}")
+    print("")
+    print(f"  Files scanned (clean):   {c.total_clean}")
+    print(f"  Files scanned (malicious): {c.total_malicious}")
+    print(f"  Total files scanned:     {c.total}")
+    print("")
+    print(f"  False positive rate:  {c.false_positive_rate:.2f}%")
+    print(f"  False negative rate:  {c.false_negative_rate:.2f}%")
+    print(f"  Precision:            {c.precision:.2f}%")
+    print(f"  Recall:               {c.recall:.2f}%")
     print("")
     print(
         "This is a research measurement, not a detection verdict. "
-        "A file flagged here may be a false positive or a real detection; "
-        "inspect each one before concluding."
+        "False positives and false negatives must both be inspected before "
+        "drawing conclusions about detection quality."
     )
-    if result.flagged:
+    if result.clean_details:
         print("")
-        print("Flagged files:")
-        for item in result.flagged:
-            print(
-                f"  {item['level']:<11} {item['path']}  "
-                f"({item['evidence']})  sha256:{item['sha256']}…"
-            )
+        print("False positives (clean files flagged):")
+        for item in result.clean_details:
+            print(f"  {item['level']:<11} {item['path']}  ({item['evidence']})")
+    if result.malicious_details:
+        print("")
+        print("False negatives (malicious files missed):")
+        # malicious_details currently contains flagged malicious files (true
+        # positives); false negatives are the unflagged ones, which are not
+        # individually listed here because they produced no engine output.
+        print(
+            f"  {c.false_negative} malicious file(s) were not flagged by any engine."
+        )
     return EXIT_OK
 
 
@@ -1657,10 +1699,14 @@ def build_parser() -> argparse.ArgumentParser:
     research_sub = research.add_subparsers(dest="action", required=True)
     research_fp = research_sub.add_parser(
         "fp-baseline",
-        help="Measure the false-positive rate on a directory of known-good files.",
+        help="Measure false-positive and false-negative rates (honest measurement).",
     )
     research_fp.add_argument(
         "directory", help="Directory of known-good files to scan (read-only)."
+    )
+    research_fp.add_argument(
+        "--malicious-dir",
+        help="Optional directory of known-bad files to measure false negatives.",
     )
     research_fp.add_argument("--json", action="store_true")
     research_fp.set_defaults(func=cmd_research, action="fp-baseline")

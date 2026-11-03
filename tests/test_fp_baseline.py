@@ -1,4 +1,4 @@
-"""False-positive baseline measurement tests (research track).
+"""False-positive / false-negative measurement tests (research track).
 
 These tests verify the measurement tooling only — no detection feature ships
 as part of MYAV Core from this ticket.
@@ -16,8 +16,10 @@ from myav.engine import MALICIOUS, EngineResult
 from myav.paths import Paths, default_paths
 from myav.platforms import detect_platform
 from myav.research.fp_baseline import (
-    FPBaselineResult,
-    scan_directory_for_false_positives,
+    ConfusionMatrix,
+    MeasurementResult,
+    ScanOutcome,
+    measure_fp_fn,
 )
 from myav.state import State
 
@@ -72,7 +74,7 @@ def fp_engines(fp_platform):
     return make_engines(fp_platform, clam=clam)
 
 
-def test_fp_baseline_clean_corpus_zero_fp(
+def test_measure_fp_fn_clean_corpus_zero_fp(
     fp_config, fp_paths, fp_state, fp_engines, tmp_path: Path
 ) -> None:
     corpus = tmp_path / "clean-corpus"
@@ -82,19 +84,18 @@ def test_fp_baseline_clean_corpus_zero_fp(
     (corpus / "sub").mkdir()
     (corpus / "sub" / "c.py").write_text("print('clean')")
 
-    result = scan_directory_for_false_positives(
-        corpus, fp_config, fp_paths, fp_engines
-    )
+    result = measure_fp_fn(corpus, fp_config, fp_paths, fp_engines)
 
-    assert isinstance(result, FPBaselineResult)
-    assert result.total_scanned == 3
-    assert result.false_positives == 0
-    assert result.false_positive_rate == 0.0
-    assert result.is_clean
-    assert result.flagged == []
+    assert isinstance(result, MeasurementResult)
+    c = result.confusion
+    assert c.total_clean == 3
+    assert c.false_positive == 0
+    assert c.true_negative == 3
+    assert c.false_positive_rate == 0.0
+    assert c.recall == 0.0  # no malicious files, so recall is undefined/zero
 
 
-def test_fp_baseline_with_eicar_one_fp(
+def test_measure_fp_fn_with_eicar_one_fp(
     fp_config, fp_paths, fp_state, fp_platform, tmp_path: Path
 ) -> None:
     corpus = tmp_path / "mixed-corpus"
@@ -107,46 +108,137 @@ def test_fp_baseline_with_eicar_one_fp(
 
     engines = make_engines(fp_platform, clam=EicarClam())
 
-    result = scan_directory_for_false_positives(
-        corpus, fp_config, fp_paths, engines
-    )
+    result = measure_fp_fn(corpus, fp_config, fp_paths, engines)
 
-    assert result.total_scanned == 2
-    assert result.false_positives == 1
+    assert result.confusion.total == 2
+    assert result.confusion.false_positive == 1
+    assert result.confusion.true_negative == 1
     assert result.false_positive_rate == 50.0
-    assert not result.is_clean
-    assert len(result.flagged) == 1
-    assert result.flagged[0]["level"] == "MALICIOUS"
-    assert "Eicar" in result.flagged[0]["evidence"]
+    assert len(result.clean_details) == 1
+    assert result.clean_details[0]["level"] == "MALICIOUS"
+    assert "Eicar" in result.clean_details[0]["evidence"]
 
 
-def test_fp_baseline_empty_directory(
+def test_measure_fp_fn_empty_directory(
     fp_config, fp_paths, fp_state, fp_engines, tmp_path: Path
 ) -> None:
     corpus = tmp_path / "empty"
     corpus.mkdir()
 
-    result = scan_directory_for_false_positives(
-        corpus, fp_config, fp_paths, fp_engines
-    )
+    result = measure_fp_fn(corpus, fp_config, fp_paths, fp_engines)
 
-    assert result.total_scanned == 0
-    assert result.false_positives == 0
+    assert result.confusion.total_clean == 0
+    assert result.confusion.false_positive == 0
     assert result.false_positive_rate == 0.0
-    assert result.is_clean
 
 
-def test_fp_baseline_report_structure(
-    fp_config, fp_paths, fp_state, fp_engines, tmp_path: Path
+def test_measure_fp_fn_with_malicious_dir_calculates_fnr(
+    fp_config, fp_paths, fp_state, fp_platform, tmp_path: Path
 ) -> None:
-    corpus = tmp_path / "corpus"
-    corpus.mkdir()
-    (corpus / "a.txt").write_text("clean")
+    clean_dir = tmp_path / "clean-corpus"
+    clean_dir.mkdir()
+    (clean_dir / "a.txt").write_text("hello world")
 
-    result = scan_directory_for_false_positives(
-        corpus, fp_config, fp_paths, fp_engines
+    malicious_dir = tmp_path / "malicious-corpus"
+    malicious_dir.mkdir()
+    # One eicar that WILL be detected (true positive)
+    detected = malicious_dir / "eicar.com"
+    detected.write_text(
+        "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+    )
+    # One clean-looking file that will NOT be detected (false negative)
+    missed = malicious_dir / "stealth.bin"
+    missed.write_text("this looks clean but is actually malware")
+
+    engines = make_engines(fp_platform, clam=EicarClam())
+
+    result = measure_fp_fn(
+        clean_dir, fp_config, fp_paths, engines, malicious_dir=malicious_dir
     )
 
-    assert result.directory == str(corpus.resolve())
-    assert result.total_scanned == 1
-    assert isinstance(result.false_positive_rate, float)
+    c = result.confusion
+    assert c.total_clean == 1
+    assert c.false_positive == 0
+    assert c.total_malicious == 2
+    assert c.true_positive == 1  # eicar detected
+    assert c.false_negative == 1  # stealth.bin missed
+    assert c.false_positive_rate == 0.0
+    assert c.false_negative_rate == 50.0
+    assert c.precision == 100.0
+    assert c.recall == 50.0
+
+
+def test_measure_fp_fn_all_malicious_detected(
+    fp_config, fp_paths, fp_state, fp_platform, tmp_path: Path
+) -> None:
+    clean_dir = tmp_path / "clean-corpus"
+    clean_dir.mkdir()
+    (clean_dir / "a.txt").write_text("hello world")
+
+    malicious_dir = tmp_path / "malicious-corpus"
+    malicious_dir.mkdir()
+    (malicious_dir / "eicar1.com").write_text(
+        "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+    )
+    (malicious_dir / "eicar2.com").write_text(
+        "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+    )
+
+    engines = make_engines(fp_platform, clam=EicarClam())
+
+    result = measure_fp_fn(
+        clean_dir, fp_config, fp_paths, engines, malicious_dir=malicious_dir
+    )
+
+    c = result.confusion
+    assert c.total_malicious == 2
+    assert c.true_positive == 2
+    assert c.false_negative == 0
+    assert c.false_negative_rate == 0.0
+    assert c.recall == 100.0
+
+
+def test_scan_outcome_dataclass() -> None:
+    outcome = ScanOutcome(
+        directory="/tmp/test",
+        total_scanned=5,
+        flagged=2,
+        skipped=1,
+        flagged_files=[
+            {
+                "path": "/tmp/test/a.txt",
+                "level": "MALICIOUS",
+                "evidence": "clamav:Eicar",
+                "sha256": "abc",
+            }
+        ],
+    )
+    assert outcome.total_scanned == 5
+    assert outcome.flagged == 2
+    assert outcome.skipped == 1
+    assert len(outcome.flagged_files) == 1
+
+
+def test_confusion_matrix_properties() -> None:
+    cm = ConfusionMatrix(
+        true_negative=90, false_positive=10,
+        false_negative=5, true_positive=95,
+    )
+    assert cm.total_clean == 100
+    assert cm.total_malicious == 100
+    assert cm.total == 200
+    assert cm.false_positive_rate == 10.0
+    assert cm.false_negative_rate == 5.0
+    assert round(cm.precision, 1) == 90.5  # 95 / (95+10)
+    assert cm.recall == 95.0  # 95 / 100
+
+
+def test_confusion_matrix_empty() -> None:
+    cm = ConfusionMatrix(
+        true_negative=0, false_positive=0,
+        false_negative=0, true_positive=0,
+    )
+    assert cm.false_positive_rate == 0.0
+    assert cm.false_negative_rate == 0.0
+    assert cm.precision == 0.0
+    assert cm.recall == 0.0
