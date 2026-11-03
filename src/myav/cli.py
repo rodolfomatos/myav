@@ -42,7 +42,7 @@ from .paths import (
     default_paths,
     ensure_dirs,
 )
-from .pipeline import Engines, Outcome, build_engines, default_scope, scan_targets
+from .pipeline import Engines, Outcome, build_engines, default_scope, scan_targets, walk_directory
 from .platforms import Capability, Platform, detect_platform
 from .quarantine import Quarantine, QuarantineError
 from .report import ReportContext, build_context, render_report, write_report
@@ -459,19 +459,43 @@ def cmd_full_scan(args: argparse.Namespace) -> int:
         )
         return EXIT_FAIL
 
+    show_progress = args.progress and not args.json and not args.quiet
+
+    # Count total files for the progress denominator.
+    total = 0
+    if show_progress:
+        for target in existing:
+            if target.is_dir():
+                total += sum(1 for _ in walk_directory(target, ctx.config))
+            elif target.is_file():
+                total += 1
+
     engines = ctx.engines()
     started = _now()
-    outcomes = list(
-        scan_targets(
-            existing,
-            ctx.config,
-            ctx.paths,
-            ctx.state,
-            engines,
-            kind="full",
-            dry_run=args.dry_run,
-        )
-    )
+    scanned = 0
+    outcomes = []
+    for outcome in scan_targets(
+        existing,
+        ctx.config,
+        ctx.paths,
+        ctx.state,
+        engines,
+        kind="full",
+        dry_run=args.dry_run,
+    ):
+        scanned += 1
+        if show_progress and total:
+            pct = scanned / total * 100
+            print(
+                f"\r[progress] {scanned}/{total} ({pct:.0f}%) {outcome.path}",
+                file=sys.stderr,
+                end="",
+                flush=True,
+            )
+        outcomes.append(outcome)
+    if show_progress and total:
+        print(file=sys.stderr)  # terminate the progress line
+
     context = build_context(
         kind="full",
         started=started,
@@ -1410,6 +1434,15 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("paths", nargs="*", help="Override the default scope.")
     full.add_argument("--dry-run", action="store_true", help="Detect but do not quarantine.")
     full.add_argument("--json", action="store_true")
+    full.add_argument(
+        "--quiet", action="store_true", help="Suppress progress and summary output."
+    )
+    full.add_argument(
+        "--progress",
+        action="store_true",
+        default=True,
+        help="Show per-file progress (default on, off with --json or --quiet).",
+    )
 
     baseline = add(
         "baseline",
@@ -1509,6 +1542,9 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--once", action="store_true", help="Scan what is already there, then exit.")
     watch.add_argument("--create-dirs", action="store_true", help="Create missing watch folders.")
     watch.add_argument("--json", action="store_true")
+    watch.add_argument(
+        "--quiet", action="store_true", help="Suppress progress and summary output."
+    )
 
     selftest = add(
         "selftest", cmd_selftest, "Prove the whole chain with the harmless EICAR test file."

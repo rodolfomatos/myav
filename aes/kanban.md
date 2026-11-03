@@ -1,7 +1,7 @@
 ---
 project: myav
 created: 2026-11-01
-current_sprint: sprint-03
+current_sprint: sprint-04
 current_ticket: none
 tier: AES-heavy
 ---
@@ -56,9 +56,7 @@ tier: AES-heavy
 | T021 | Scheduled YARA pack refresh with rule-diff review | `pytest` (299 pass), `ruff` clean, coverage 91.96% |
 | T022 | Shell completion | `pytest` (306 pass), `ruff` clean, coverage 91.73% |
 | T023 | --json for every command | `pytest` (306 pass), `ruff` clean, coverage 91.73% |
-| T019 | Archive/compressed handling (zip/7z/docm) | `pytest` (292 pass), `ruff` clean, coverage 92.60% |
-| T020 | usbipd-aware device enumeration | `pytest` (296 pass), `ruff` clean, coverage 92.40% |
-| T021 | Scheduled YARA pack refresh with rule-diff review | `pytest` (299 pass), `ruff` clean, coverage 91.96% |
+| T024 | Per-file progress line for long full scans | `pytest` (309 pass), `ruff` clean, coverage 91.72% |
 
 ## Blocked
 

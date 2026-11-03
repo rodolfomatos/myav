@@ -227,6 +227,35 @@ def test_full_scan_nothing_to_scan(fake, tmp_path, monkeypatch, capsys) -> None:
     assert "Nothing to scan" in capsys.readouterr().err
 
 
+def test_full_scan_shows_progress_on_stderr(fake, tmp_path, capsys) -> None:
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / "a.txt").write_text("a")
+    (folder / "b.txt").write_text("b")
+    assert cli.main(["full-scan", str(folder)]) == 0
+    err = capsys.readouterr().err
+    assert "[progress]" in err
+    assert "2/2" in err
+
+
+def test_full_scan_suppresses_progress_with_json(fake, tmp_path, capsys) -> None:
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / "a.txt").write_text("a")
+    assert cli.main(["full-scan", str(folder), "--json"]) == 0
+    err = capsys.readouterr().err
+    assert "[progress]" not in err
+
+
+def test_full_scan_suppresses_progress_with_quiet(fake, tmp_path, capsys) -> None:
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / "a.txt").write_text("a")
+    assert cli.main(["full-scan", str(folder), "--quiet"]) == 0
+    err = capsys.readouterr().err
+    assert "[progress]" not in err
+
+
 # ------------------------------------------------------------------- baseline
 
 
