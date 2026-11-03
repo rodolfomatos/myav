@@ -1162,6 +1162,8 @@ def cmd_research(args: argparse.Namespace) -> int:
         return _cmd_research_behaviour_detect(args)
     if args.action == "ml-baseline":
         return _cmd_research_ml_baseline(args)
+    if args.action == "sandbox":
+        return _cmd_research_sandbox(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1471,16 +1473,67 @@ def _cmd_research_ml_baseline(args: argparse.Namespace) -> int:
     print(f"  Precision:            {result['precision']:.2f}%")
     print(f"  Recall:               {result['recall']:.2f}%")
     print("")
-    print("This is a research measurement, not a detection verdict.")
-    print(
-        "Temporal evaluation (train=older, test=newer) is used so results "
-        "are honest — random splits overstate performance."
+    if args.action == "ml-baseline":
+        return _cmd_research_ml_baseline(args)
+    if args.action == "sandbox":
+        return _cmd_research_sandbox(args)
+    print(f"myav: unknown research action: {args.action}", file=sys.stderr)
+    return EXIT_USAGE
+
+
+def _cmd_research_sandbox(args: argparse.Namespace) -> int:
+    """Run a file in a lightweight sandbox for observation.
+
+    Read-only: executes the file with resource limits and monitors
+    process spawns, file modifications, network connections and
+    autostart changes. Reports a behavioural timeline — not a verdict.
+    Never blocks.
+    """
+    target = Path(args.path).expanduser()
+    if not target.exists():
+        print(f"myav: no such path: {target}", file=sys.stderr)
+        return EXIT_USAGE
+    if not target.is_file():
+        print(f"myav: not a regular file: {target}", file=sys.stderr)
+        return EXIT_USAGE
+
+    from .research.sandbox import result_to_dict, run_in_sandbox
+
+    result = run_in_sandbox(
+        target,
+        duration_seconds=args.duration,
     )
+
+    if args.json:
+        _emit(result_to_dict(result))
+        return EXIT_OK
+
+    print(f"Sandbox: {result.target}")
+    print(f"  Duration: {result.duration_seconds:.2f}s")
+    print(f"  Timeout killed: {result.timeout_killed}")
+    print(f"  Exit code: {result.exit_code}")
+    print(f"  Events: {result.event_count}")
+    print(f"  Evasions: {result.evasion_count}")
     print("")
-    if result.get("top_features"):
-        print("Top features (by |weight|):")
-        for f in result["top_features"]:
-            print(f"  feature[{f['feature_index']}]: importance={f['importance']:.4f}")
+    if result.events:
+        print("Behavioural timeline:")
+        for e in result.events:
+            print(f"  [{e.timestamp:6.2f}s] {e.event_type:<12} {e.detail}"
+                  + (f" ({e.path})" if e.path else ""))
+    else:
+        print("  No events observed.")
+    print("")
+    if result.evasions:
+        print("Sandbox evasion indicators:")
+        for ev in result.evasions:
+            print(f"  [{ev.severity}] {ev.type}: {ev.description}")
+    else:
+        print("  No sandbox evasion indicators.")
+    print("")
+    print(
+        "This is a research measurement, not a detection verdict. "
+        "Events are observed only — nothing is blocked."
+    )
     return EXIT_OK
 
 
@@ -2006,6 +2059,24 @@ def build_parser() -> argparse.ArgumentParser:
     research_ml.add_argument("--json", action="store_true")
     research_ml.set_defaults(
         func=cmd_research, action="ml-baseline"
+    )
+
+    research_sandbox = research_sub.add_parser(
+        "sandbox",
+        help="Execute a file in a lightweight sandbox and observe behaviour.",
+    )
+    research_sandbox.add_argument(
+        "path", help="File to execute in the sandbox (read-only)."
+    )
+    research_sandbox.add_argument(
+        "--duration",
+        type=float,
+        default=30.0,
+        help="Observation window in seconds (default: 30.0).",
+    )
+    research_sandbox.add_argument("--json", action="store_true")
+    research_sandbox.set_defaults(
+        func=cmd_research, action="sandbox"
     )
 
     inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")

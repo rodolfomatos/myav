@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -901,6 +903,37 @@ def test_research_ml_baseline_json(fake, tmp_path, capsys) -> None:
 
 def test_research_ml_baseline_train_dir_not_found(fake, capsys) -> None:
     assert cli.main(["research", "ml-baseline", "--train-dir", "/nonexistent/train"]) == 2
+
+
+# ------------------------------------------------------------------- research sandbox
+
+
+def test_research_sandbox_clean_file(fake, tmp_path, capsys) -> None:
+    script = tmp_path / "hello.sh"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    os.chmod(script, stat.S_IRUSR | stat.S_IXUSR)
+
+    assert cli.main(["research", "sandbox", str(script)]) == 0
+    out = capsys.readouterr().out
+    assert "Sandbox:" in out
+    assert "Files scanned:" not in out  # sandbox doesn't scan files, it executes
+
+
+def test_research_sandbox_json(fake, tmp_path, capsys) -> None:
+    script = tmp_path / "hello.sh"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    os.chmod(script, stat.S_IRUSR | stat.S_IXUSR)
+
+    assert cli.main(["research", "sandbox", str(script), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "research-sandbox"
+    assert payload["target"] == str(script.resolve())
+    assert "event_count" in payload
+    assert "evasion_count" in payload
+
+
+def test_research_sandbox_not_a_file(fake, capsys) -> None:
+    assert cli.main(["research", "sandbox", "/nonexistent/path"]) == 2
 
 
 # ----------------------------------------------------------------------- quarantine

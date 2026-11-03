@@ -3,7 +3,7 @@ ticket: T031
 title: Lightweight sandbox — sufficient observation time
 sprint: research-01
 priority: medium
-status: pending
+status: done
 created: 2026-11-03
 ---
 
