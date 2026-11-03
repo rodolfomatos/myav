@@ -30,6 +30,7 @@ class ReportContext:
     quarantine: list[QuarantineRecord]
     attention: list[str]
     scope: list[Path]
+    quarantine_budget_bytes: int | None = None
 
 
 def utcnow() -> datetime:
@@ -104,6 +105,12 @@ def render_report(context: ReportContext) -> str:
         add(
             "Restore anything from here with `myav restore <id>`. Nothing is deleted automatically."
         )
+    if context.quarantine_budget_bytes is not None:
+        total = sum(record.size for record in context.quarantine)
+        budget = context.quarantine_budget_bytes
+        usage = total / budget * 100
+        add("")
+        add(f"Quarantine budget: {format_bytes(total)} of {format_bytes(budget)} ({usage:.1f}%).")
     add("")
 
     add("## Needs your attention")
@@ -209,6 +216,7 @@ def build_context(
     state: State,
     scope: list[Path] | None = None,
     extra_attention: list[str] | None = None,
+    quarantine_budget_bytes: int | None = None,
 ) -> ReportContext:
     signature = engines.signature_info
     yara_status = engines.yara.status()
@@ -230,9 +238,15 @@ def build_context(
         yara_state = f"{yara_status['rule_files']} rule files ({yara_status['source']})"
 
     if vt_status["configured"]:
+        used_day = vt_status["requests_last_day"]
+        limit_day = vt_status["limits"]["per_day"]
+        used_min = vt_status["requests_last_minute"]
+        limit_min = vt_status["limits"]["per_minute"]
+        remaining = max(0, limit_day - used_day)
         vt_state = (
             f"hash-only lookups enabled "
-            f"({vt_status['requests_last_day']}/{vt_status['limits']['per_day']} today)"
+            f"({used_day}/{limit_day} today, {used_min}/{limit_min} this minute, "
+            f"{remaining} remaining today)"
         )
     else:
         vt_state = "not configured (optional) — verdicts rely on ClamAV + YARA"
@@ -251,4 +265,5 @@ def build_context(
         quarantine=state.list_quarantines(),
         attention=extra_attention or [],
         scope=scope or [],
+        quarantine_budget_bytes=quarantine_budget_bytes,
     )

@@ -164,7 +164,15 @@ log "3/6 — Updating the signature database once"
 # Why: a freshly installed ClamAV has an old or empty database. One update now
 # means the first scan is meaningful. The nightly job keeps it fresh afterwards.
 if have freshclam; then
-  run freshclam
+  # If the freshclam daemon is already running (started by the package postinst
+  # on systemd hosts), it is already keeping the database fresh. Running a
+  # one-shot freshclam here would collide on /var/log/clamav/freshclam.log's
+  # lock, so we skip it and let the daemon handle the updates.
+  if pgrep -x freshclam >/dev/null 2>&1; then
+    note "clamav-freshclam daemon is already running — signature updates are handled by it; skipping one-shot freshclam."
+  else
+    run freshclam
+  fi
 else
   note "freshclam is not on PATH yet; skipping the first update."
 fi
@@ -203,13 +211,21 @@ EOF
     run systemctl enable --now clamav-freshclam
     run systemctl enable --now clamav-daemon
   else
-    note "systemd is not running (common on WSL). Starting clamd directly instead:"
+    note "systemd is not available. Starting clamd directly instead:"
+    # clamd drops privileges to the clamav user (User clamav in clamd.conf).
+    # Create the socket directory with the right ownership before starting,
+    # otherwise clamd cannot bind its socket and fails with "Permission denied".
     if have clamd; then
-      run clamd
+      CLAMD_BIN="$(command -v clamd)"
     elif [ -x /usr/sbin/clamd ]; then
-      run /usr/sbin/clamd
+      CLAMD_BIN="/usr/sbin/clamd"
     else
       note "clamd binary not found; myav will fall back to clamscan per file."
+      CLAMD_BIN=""
+    fi
+    if [ -n "${CLAMD_BIN:-}" ]; then
+      install -d -o clamav -g clamav -m 755 /var/run/clamav 2>/dev/null || true
+      run runuser -u clamav -- "$CLAMD_BIN"
     fi
   fi
 else

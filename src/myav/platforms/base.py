@@ -28,6 +28,7 @@ class Capability(str, Enum):
     STARTUP_WINDOWS = "startup-windows"
     QUARANTINE = "quarantine"
     SYSTEM_PACKAGES = "system-packages"
+    TOAST = "toast"
 
 
 @dataclass(frozen=True)
@@ -174,7 +175,7 @@ def detect_platform(
             label="Windows",
             family="windows",
             is_wsl=False,
-            capabilities=DESKTOP_CAPS,
+            capabilities=DESKTOP_CAPS | {Capability.TOAST},
             dirs=_windows_dirs(home_path, env),
             scheduler="task-scheduler",
             startup_sources=("registry-run", "startup-folder", "scheduled-tasks"),
@@ -277,7 +278,7 @@ def _forced_platform(
             "windows",
             "task-scheduler",
             ("registry-run",),
-            DESKTOP_CAPS,
+            DESKTOP_CAPS | {Capability.TOAST},
             _windows_dirs,
         ),
         "android": ("Android (companion)", "mobile", "workmanager", (), ANDROID_CAPS, _posix_dirs),

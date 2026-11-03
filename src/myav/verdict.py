@@ -86,6 +86,12 @@ def fuse(results: Iterable[EngineResult], stale_signatures: bool = False) -> Ver
     if stale_signatures:
         degraded.append("clamav: signature database is older than 48h")
 
+    # Correlation: both ClamAV and YARA fired on the same file. Additive evidence,
+    # never changes the level (max severity still wins).
+    fired_engines = {r.engine for r in results if r.fired}
+    if "clamav" in fired_engines and "yara" in fired_engines:
+        reasons.append("correlation: clamav+yara agree")
+
     if level == LEVEL_CLEAN and not any(result.status == CLEAN for result in results):
         # Nothing actually ran and nothing failed loudly: we know nothing.
         level = LEVEL_UNKNOWN

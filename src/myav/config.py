@@ -83,6 +83,11 @@ class ReportConfig:
 
 
 @dataclass
+class QuarantineConfig:
+    budget_bytes: int | None = None
+
+
+@dataclass
 class Config:
     paths: Paths = field(default_factory=default_paths)
     clamav: ClamAVConfig = field(default_factory=ClamAVConfig)
@@ -91,6 +96,7 @@ class Config:
     watcher: WatcherConfig = field(default_factory=WatcherConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
+    quarantine: QuarantineConfig = field(default_factory=QuarantineConfig)
     warnings: list[str] = field(default_factory=list)
 
     # ---------------------------------------------------------------- loading
@@ -178,6 +184,12 @@ class Config:
                 setattr(watcher, key, caster(value))
         updated.watcher = watcher
 
+        quarantine = replace(updated.quarantine)
+        value = _get(raw, "quarantine", "budget_bytes")
+        if value is not None:
+            quarantine.budget_bytes = int(value)
+        updated.quarantine = quarantine
+
         scan = replace(updated.scan)
         for key, caster in (
             ("timeout", int),
@@ -238,6 +250,7 @@ class Config:
             },
             "scan": vars(self.scan),
             "report": vars(self.report),
+            "quarantine": vars(self.quarantine),
             "warnings": self.warnings,
         }
 
@@ -260,7 +273,7 @@ def _get(raw: dict[str, Any], section: str, key: str) -> Any:
 
 
 def unknown_sections(raw: dict[str, Any]) -> list[str]:
-    known = {"clamav", "yara", "virustotal", "watcher", "scan", "report"}
+    known = {"clamav", "yara", "virustotal", "watcher", "scan", "report", "quarantine"}
     return [f"unknown config section [{name}] ignored" for name in raw if name not in known]
 
 

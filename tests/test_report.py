@@ -209,6 +209,19 @@ def test_build_context_unavailable_and_missing_rules(paths, state, platform, con
     assert "unavailable — clamd missing" in context.engine_state["ClamAV"]
     assert "rules missing" in context.engine_state["YARA"]
     assert "hash-only lookups enabled" in context.engine_state["VirusTotal"]
+    assert "0/500 today" in context.engine_state["VirusTotal"]
+    assert "0/4 this minute" in context.engine_state["VirusTotal"]
+    assert "500 remaining today" in context.engine_state["VirusTotal"]
+
+
+def test_build_context_vt_not_configured(paths, state, platform, config) -> None:
+    engines = make_engines(
+        platform, clam=StubClam(), yara=StubYara(files=3), vt=StubVirusTotal(configured=False)
+    )
+    context = build_context(
+        kind="full", started=utcnow(), outcomes=[], engines=engines, state=state
+    )
+    assert "not configured (optional)" in context.engine_state["VirusTotal"]
 
 
 def test_stale_signature_is_marked(paths, state, platform, config) -> None:

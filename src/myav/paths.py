@@ -15,6 +15,8 @@ are indistinguishable. Native Linux uses /media and /run/media.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -173,4 +175,41 @@ def discover_removable_mounts(mounts_file: Path | str = "/proc/mounts") -> list[
             continue
         seen.add(path)
         result.append(path)
+    for usbipd_path in discover_usbipd_devices():
+        if usbipd_path not in seen and usbipd_path.exists():
+            seen.add(usbipd_path)
+            result.append(usbipd_path)
     return result
+
+
+def discover_usbipd_devices() -> list[Path]:
+    """List mount points of devices attached via usbipd (Windows USB/IP daemon).
+
+    Relevant on WSL with usbipd-win: USB devices shared from Windows appear as mounts
+    inside WSL. On systems without usbipd, returns an empty list gracefully.
+    """
+    usbipd = shutil.which("usbipd")
+    if not usbipd:
+        return []
+
+    try:
+        completed = subprocess.run(
+            [usbipd, "list"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    if completed.returncode != 0:
+        return []
+
+    mount_points: list[Path] = []
+    for line in completed.stdout.splitlines():
+        # usbipd list output is device-centric; mount points may not be directly listed.
+        # Heuristic: look for lines mentioning a mount path under /mnt or /media.
+        parts = line.split()
+        for part in parts:
+            candidate = Path(part)
+            if str(candidate).startswith(("/mnt/", "/media/", "/run/media/")):
+                if candidate.exists() and candidate.is_mount():
+                    mount_points.append(candidate)
+    return mount_points

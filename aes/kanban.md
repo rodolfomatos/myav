@@ -1,8 +1,8 @@
 ---
 project: myav
 created: 2026-11-01
-current_sprint: sprint-01
-current_ticket: 
+current_sprint: sprint-03
+current_ticket: none
 tier: AES-heavy
 ---
 
@@ -11,27 +11,16 @@ tier: AES-heavy
 > Source of truth for project state. Agents update this file, not their memory.
 > Tier: **AES-heavy** — architectural, system-level, security-sensitive.
 
-## Backlog
-
-| ID | Title | Priority | Notes |
-|----|-------|----------|-------|
-| T013 | Baseline scan of pre-existing files | high | Sprint 02 |
-| T014 | Allowlist UI (myav allow add/remove/list) | high | Sprint 02 |
-| T015 | Windows toast notification for alerts | medium | Sprint 02 |
-| T016 | Quarantine size budget & rotation | medium | Sprint 02 |
-| T017 | VT quota dashboard in report | medium | Sprint 02 |
-| T018 | ClamAV + YARA correlation scoring | medium | Sprint 03 |
-| T019 | Archive/compressed handling (zip/7z/docm) | high | Sprint 03 |
-| T020 | usbipd-aware device enumeration | medium | Sprint 03 |
-| T021 | Scheduled YARA pack refresh with rule-diff review | medium | Sprint 03 |
-| T022 | Shell completion | low | Polish |
-| T023 | --json for every command | low | Polish |
-
 ## In Progress
 
 | ID | Title | Phase |
 |----|-------|-------|
 | — | — | — |
+
+## Backlog
+
+| ID | Title | Priority | Notes |
+|----|-------|----------|-------|
 
 ## Review
 
@@ -56,6 +45,20 @@ tier: AES-heavy
 | T010 | Plain-English reports | `tests/test_report.py` |
 | T011 | EICAR self-test + live verification | `tests/test_selftest.py` |
 | T012 | Operator runbook + final docs | `docs/RUNBOOK.md`, `docs/FAQ.md` |
+| T013 | Baseline scan of pre-existing files | `pytest` (267 pass), `ruff` clean, coverage 93.97% |
+| T014 | Allowlist UI (myav allow add/remove/list) | `pytest` (272 pass), `ruff` clean, coverage 94.02% |
+| T015 | Windows toast notification for alerts | `pytest` (276 pass), `ruff` clean, coverage 94.05% |
+| T016 | Quarantine size budget & rotation | `pytest` (281 pass), `ruff` clean, coverage 92.71% |
+| T017 | VT quota dashboard in report | `pytest` (282 pass), `ruff` clean, coverage 92.72% |
+| T018 | ClamAV + YARA correlation scoring | `pytest` (286 pass), `ruff` clean, coverage 92.73% |
+| T019 | Archive/compressed handling (zip/7z/docm) | `pytest` (292 pass), `ruff` clean, coverage 92.60% |
+| T020 | usbipd-aware device enumeration | `pytest` (296 pass), `ruff` clean, coverage 92.40% |
+| T021 | Scheduled YARA pack refresh with rule-diff review | `pytest` (299 pass), `ruff` clean, coverage 91.96% |
+| T022 | Shell completion | `pytest` (306 pass), `ruff` clean, coverage 91.73% |
+| T023 | --json for every command | `pytest` (306 pass), `ruff` clean, coverage 91.73% |
+| T019 | Archive/compressed handling (zip/7z/docm) | `pytest` (292 pass), `ruff` clean, coverage 92.60% |
+| T020 | usbipd-aware device enumeration | `pytest` (296 pass), `ruff` clean, coverage 92.40% |
+| T021 | Scheduled YARA pack refresh with rule-diff review | `pytest` (299 pass), `ruff` clean, coverage 91.96% |
 
 ## Blocked
 

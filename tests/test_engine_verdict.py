@@ -111,6 +111,50 @@ def test_fuse_stale_signatures_are_degraded() -> None:
     assert any("older than 48h" in item for item in verdict.degraded)
 
 
+def test_fuse_clamav_and_yara_correlation() -> None:
+    verdict = fuse(
+        [
+            EngineResult(engine="clamav", status=MALICIOUS, signature="Eicar", primary=True),
+            EngineResult(engine="yara", status=SUSPICIOUS, signature="suspicious-rule"),
+        ]
+    )
+    assert verdict.level == LEVEL_MALICIOUS
+    assert any("correlation: clamav+yara agree" in r for r in verdict.reasons)
+
+
+def test_fuse_only_clamav_no_correlation() -> None:
+    verdict = fuse(
+        [
+            EngineResult(engine="clamav", status=MALICIOUS, signature="Eicar", primary=True),
+            EngineResult(engine="yara", status=CLEAN),
+        ]
+    )
+    assert verdict.level == LEVEL_MALICIOUS
+    assert not any("correlation" in r for r in verdict.reasons)
+
+
+def test_fuse_only_yara_no_correlation() -> None:
+    verdict = fuse(
+        [
+            EngineResult(engine="clamav", status=CLEAN, primary=True),
+            EngineResult(engine="yara", status=MALICIOUS, signature="rule"),
+        ]
+    )
+    assert verdict.level == LEVEL_MALICIOUS
+    assert not any("correlation" in r for r in verdict.reasons)
+
+
+def test_fuse_neither_fires_no_correlation() -> None:
+    verdict = fuse(
+        [
+            EngineResult(engine="clamav", status=CLEAN, primary=True),
+            EngineResult(engine="yara", status=CLEAN),
+        ]
+    )
+    assert verdict.level == LEVEL_CLEAN
+    assert not any("correlation" in r for r in verdict.reasons)
+
+
 def test_verdict_as_dict_and_exit_table() -> None:
     verdict = Verdict(level=LEVEL_MALICIOUS, reasons=["x"])
     payload = verdict.as_dict()

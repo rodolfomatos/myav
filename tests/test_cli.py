@@ -71,6 +71,29 @@ def test_platforms_text_and_json(capsys) -> None:
     assert len(payload["platforms"]) >= 4
 
 
+def test_completion_bash(capsys) -> None:
+    assert cli.main(["completion"]) == 0
+    out = capsys.readouterr().out
+    assert "_myav_completion" in out
+    assert "complete -o default" in out
+    assert "scan" in out
+    assert "quarantine" in out
+
+
+def test_completion_zsh(capsys) -> None:
+    assert cli.main(["completion", "zsh"]) == 0
+    out = capsys.readouterr().out
+    assert "#compdef myav" in out
+
+
+def test_completion_json(capsys) -> None:
+    assert cli.main(["completion", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "completion"
+    assert payload["shell"] == "bash"
+    assert "_myav_completion" in payload["script"]
+
+
 def test_doctor_reports_missing_clamav(fake, monkeypatch, capsys) -> None:
     clam = StubClam(available=False)
     clam.info = type("I", (), {"available": False, "detail": "not installed", "stale": False})()
@@ -96,6 +119,7 @@ def test_doctor_healthy_path(fake, monkeypatch, capsys) -> None:
     monkeypatch.setattr(cli, "schedule_status", lambda *a, **k: {"installed": ["myav-watch"]})
     fake.config.virustotal.enabled = True
     fake.config.virustotal.api_key = "a" * 64
+    fake.state.set_baseline_established_at("2026-11-03T16:00:00+00:00")
 
     code = cli.main(["doctor"])
     out = capsys.readouterr().out
@@ -203,6 +227,54 @@ def test_full_scan_nothing_to_scan(fake, tmp_path, monkeypatch, capsys) -> None:
     assert "Nothing to scan" in capsys.readouterr().err
 
 
+# ------------------------------------------------------------------- baseline
+
+
+def test_baseline_writes_report(fake, tmp_path, capsys) -> None:
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / "a.txt").write_text("a")
+    assert cli.main(["baseline", str(folder)]) == 0
+    out = capsys.readouterr().out
+    assert "myav report — baseline" in out
+    assert list(fake.paths.reports_dir.glob("*.md"))
+
+
+def test_baseline_default_scope(fake, tmp_path, monkeypatch, capsys) -> None:
+    folder = tmp_path / "secret-scope"
+    folder.mkdir()
+    (folder / "a.txt").write_text("a")
+    monkeypatch.setattr(cli, "default_scope", lambda config, platform: [folder])
+    assert cli.main(["baseline"]) == 0
+    assert "secret-scope" in capsys.readouterr().out
+
+
+def test_baseline_nothing_to_scan(fake, tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "default_scope", lambda config, platform: [tmp_path / "gone"])
+    assert cli.main(["baseline"]) == 1
+    assert "Nothing to baseline" in capsys.readouterr().err
+
+
+def test_baseline_records_meta(fake, tmp_path) -> None:
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / "a.txt").write_text("a")
+    assert cli.main(["baseline", str(folder)]) == 0
+    ts = fake.state.get_baseline_established_at()
+    assert ts is not None
+    assert "T" in ts  # ISO format
+
+
+def test_baseline_json(fake, tmp_path, capsys) -> None:
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    (folder / "a.txt").write_text("a")
+    assert cli.main(["baseline", str(folder), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "baseline"
+    assert "baseline_established_at" in payload
+
+
 # ---------------------------------------------------------------------------- rules
 
 
@@ -265,6 +337,153 @@ def test_rules_fetch_changed_and_unchanged(fake, monkeypatch, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["changed"] is True
 
 
+def test_rules_refresh_no_change(fake, monkeypatch, capsys, tmp_path) -> None:
+    # Create a rules dir with some files and PROVENANCE
+    rules_dir = fake.paths.rules_dir
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    (rules_dir / "rule1.yar").write_text("rule a { condition: true }")
+    (rules_dir / "rule2.yar").write_text("rule b { condition: true }")
+    prov = {
+        "repo": "Neo23x0/signature-base",
+        "commit": "oldcommit1234",
+        "rule_files": 2,
+    }
+    (rules_dir / "PROVENANCE.json").write_text(
+        json.dumps(prov, indent=2), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        cli,
+        "fetch_rules",
+        lambda *a, **k: {
+            "changed": False,
+            "rule_files": 2,
+            "repo": "Neo23x0/signature-base",
+            "commit": "oldcommit1234",
+        },
+    )
+    assert cli.main(["rules", "refresh"]) == 0
+    out = capsys.readouterr().out
+    assert "already up to date" in out
+
+
+def test_rules_refresh_with_changes(fake, monkeypatch, capsys, tmp_path) -> None:
+    rules_dir = fake.paths.rules_dir
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    (rules_dir / "old.yar").write_text("rule old { condition: true }")
+    prov = {
+        "repo": "Neo23x0/signature-base",
+        "commit": "oldcommit1234",
+        "rule_files": 1,
+    }
+    (rules_dir / "PROVENANCE.json").write_text(
+        json.dumps(prov, indent=2), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        cli,
+        "fetch_rules",
+        lambda *a, **k: {
+            "changed": True,
+            "rule_files": 2,
+            "repo": "Neo23x0/signature-base",
+            "commit": "newcommit5678",
+            "compile": {"compiled": True, "rules": 2},
+        },
+    )
+    # After fetch, the new rule file should exist
+    def fake_fetch(*a, **k):
+        (rules_dir / "new.yar").write_text("rule new { condition: true }")
+        return {
+            "changed": True,
+            "rule_files": 2,
+            "repo": "Neo23x0/signature-base",
+            "commit": "newcommit5678",
+            "compile": {"compiled": True, "rules": 2},
+        }
+
+    monkeypatch.setattr(cli, "fetch_rules", fake_fetch)
+    assert cli.main(["rules", "refresh"]) == 0
+    out = capsys.readouterr().out
+    assert "YARA pack refreshed" in out
+    assert "Added (1)" in out
+    assert "+ new.yar" in out
+
+
+def test_rules_refresh_json(fake, monkeypatch, capsys, tmp_path) -> None:
+    rules_dir = fake.paths.rules_dir
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    (rules_dir / "old.yar").write_text("rule old { condition: true }")
+    prov = {
+        "repo": "Neo23x0/signature-base",
+        "commit": "oldcommit1234",
+        "rule_files": 1,
+    }
+    (rules_dir / "PROVENANCE.json").write_text(
+        json.dumps(prov, indent=2), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        cli,
+        "fetch_rules",
+        lambda *a, **k: {
+            "changed": True,
+            "rule_files": 1,
+            "repo": "Neo23x0/signature-base",
+            "commit": "newcommit5678",
+            "compile": {"compiled": True, "rules": 1},
+        },
+    )
+    assert cli.main(["rules", "refresh", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "rules-refresh"
+    assert payload["changed"] is True
+    assert payload["before_commit"] == "oldcommit1234"
+    assert payload["after_commit"] == "newcommit5678"
+
+
+# ------------------------------------------------------------------ allow --json
+
+
+def test_allow_list_json(fake, capsys) -> None:
+    assert cli.main(["allow", "list", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "allow-list"
+    assert payload["records"] == []
+
+
+def test_allow_add_json(fake, tmp_path, capsys) -> None:
+    target = tmp_path / "trusted.bin"
+    target.write_text("trusted")
+    assert cli.main(["allow", "add", str(target), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "allow-add"
+    assert payload["path"] == str(target.absolute())
+
+
+def test_allow_remove_json(fake, tmp_path, capsys) -> None:
+    target = tmp_path / "trusted.bin"
+    target.write_text("trusted")
+    cli.main(["allow", "add", str(target)])
+    capsys.readouterr()  # discard add output
+    assert cli.main(["allow", "remove", "--json"]) == 2  # no hash arg, no --path
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "allow-remove"
+    assert payload["removed"] is False
+
+
+def test_report_json(fake, capsys) -> None:
+    assert cli.main(["report", "--json"]) == 1  # no reports yet
+    # Create a report
+    fake.paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    report_file = fake.paths.reports_dir / "2026-01-01-0000-full.md"
+    report_file.write_text("# test report")
+    assert cli.main(["report", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "report"
+    assert "# test report" in payload["content"]
+
+
 # ----------------------------------------------------------------------- quarantine
 
 
@@ -325,6 +544,165 @@ def test_allow_list_and_add(fake, tmp_path, capsys) -> None:
     assert "trusted.bin" in capsys.readouterr().out
 
     assert cli.main(["allow", "add", str(tmp_path / "missing")]) == 2
+
+
+def test_allow_remove_by_hash(fake, tmp_path, capsys) -> None:
+    target = tmp_path / "trusted.bin"
+    target.write_text("trusted")
+    from myav.hashutil import sha256_file
+
+    digest = sha256_file(target)
+    assert cli.main(["allow", "add", str(target), "--reason", "vendor"]) == 0
+    assert cli.main(["allow", "remove", digest]) == 0
+    out = capsys.readouterr().out
+    assert "Removed" in out
+    assert cli.main(["allow", "list"]) == 0
+    assert "trusted.bin" not in capsys.readouterr().out
+
+
+def test_allow_remove_by_path(fake, tmp_path, capsys) -> None:
+    target = tmp_path / "trusted.bin"
+    target.write_text("trusted")
+    assert cli.main(["allow", "add", str(target), "--reason", "vendor"]) == 0
+    assert cli.main(["allow", "remove", "--path", str(target)]) == 0
+    out = capsys.readouterr().out
+    assert "Removed" in out
+    assert cli.main(["allow", "list"]) == 0
+    assert "trusted.bin" not in capsys.readouterr().out
+
+
+def test_allow_remove_missing_hash(fake, capsys) -> None:
+    assert cli.main(["allow", "remove", "a" * 64]) == 2
+    assert "was not allowlisted" in capsys.readouterr().err
+
+
+def test_allow_remove_nonexistent_path(fake, tmp_path, capsys) -> None:
+    assert cli.main(["allow", "remove", "--path", str(tmp_path / "missing")]) == 2
+
+
+# ------------------------------------------------------------------- notify
+
+
+def test_notify_rejects_linux(fake, capsys) -> None:
+    assert cli.main(["notify", "title", "message"]) == 3
+    assert "not available" in capsys.readouterr().err
+
+
+def test_notify_json_rejects_linux(fake, capsys) -> None:
+    assert cli.main(["notify", "title", "message", "--json"]) == 3
+    err = capsys.readouterr().err
+    assert "not available" in err
+
+
+def test_notify_windows(tmp_path, monkeypatch, capsys) -> None:
+    from myav.config import Config
+    from myav.paths import default_paths
+    from myav.platforms import Capability, detect_platform
+    from myav.state import State
+    from tests.conftest import make_engines
+
+    home = tmp_path / "home"
+    for name in ("Downloads", "Desktop", "Documents"):
+        (home / name).mkdir(parents=True)
+
+    platform = detect_platform(home=home, env={"MYAV_PLATFORM": "windows"})
+    assert platform.supports(Capability.TOAST)
+    paths = default_paths(home=home, platform=platform)
+    config = Config(paths=paths)
+    config.watcher.watch_dirs = [home / "Downloads", home / "Desktop", home / "Documents"]
+    state = State(paths.state_db)
+    engines = make_engines(platform)
+
+    class WinCtx:
+        def __init__(self, config, paths, state, platform, engines):
+            self.config = config
+            self.paths = paths
+            self.state = state
+            self.platform = platform
+            self._engines = engines
+
+        def engines(self):
+            return self._engines
+
+    ctx = WinCtx(config, paths, state, platform, engines)
+    monkeypatch.setattr(cli, "make_context", lambda create_dirs=True: ctx)
+
+    assert cli.main(["notify", "myav", "threat found"]) == 0
+    out = capsys.readouterr().out
+    assert "[toast]" in out
+    assert "threat found" in out
+
+
+def test_notify_windows_json(tmp_path, monkeypatch, capsys) -> None:
+    from myav.config import Config
+    from myav.paths import default_paths
+    from myav.platforms import detect_platform
+    from myav.state import State
+    from tests.conftest import make_engines
+
+    home = tmp_path / "home"
+    for name in ("Downloads", "Desktop", "Documents"):
+        (home / name).mkdir(parents=True)
+
+    platform = detect_platform(home=home, env={"MYAV_PLATFORM": "windows"})
+    paths = default_paths(home=home, platform=platform)
+    config = Config(paths=paths)
+    state = State(paths.state_db)
+    engines = make_engines(platform)
+
+    class WinCtx:
+        def __init__(self, config, paths, state, platform, engines):
+            self.config = config
+            self.paths = paths
+            self.state = state
+            self.platform = platform
+            self._engines = engines
+
+        def engines(self):
+            return self._engines
+
+    ctx = WinCtx(config, paths, state, platform, engines)
+    monkeypatch.setattr(cli, "make_context", lambda create_dirs=True: ctx)
+
+    assert cli.main(["notify", "myav", "threat found", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "notify"
+    assert payload["title"] == "myav"
+    assert payload["message"] == "threat found"
+    assert payload["platform"] == "windows"
+
+
+# ------------------------------------------------------------------ quarantine
+
+
+def test_quarantine_budget_show(fake, capsys) -> None:
+    assert cli.main(["quarantine", "budget"]) == 0
+    out = capsys.readouterr().out
+    assert "No budget set" in out
+
+
+def test_quarantine_budget_set_and_show(fake, tmp_path, capsys) -> None:
+    assert cli.main(["quarantine", "budget", "--set", "1048576"]) == 0
+    out = capsys.readouterr().out
+    assert "1.0 MiB" in out
+
+    assert cli.main(["quarantine", "budget"]) == 0
+    out = capsys.readouterr().out
+    assert "1.0 MiB" in out
+
+
+def test_quarantine_budget_json(fake, capsys) -> None:
+    assert cli.main(["quarantine", "budget", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "quarantine-budget"
+    assert payload["budget_bytes"] is None
+
+
+def test_quarantine_rotate_under_budget(fake, capsys) -> None:
+    assert cli.main(["quarantine", "budget", "--set", "100"]) == 0
+    assert cli.main(["quarantine", "rotate"]) == 0
+    out = capsys.readouterr().out
+    assert "within budget" in out
 
 
 # ---------------------------------------------------------------------------- report

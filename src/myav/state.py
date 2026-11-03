@@ -208,6 +208,14 @@ class State:
                 row = conn.execute("SELECT ts FROM scans ORDER BY id DESC LIMIT 1").fetchone()
         return row["ts"] if row else None
 
+    # ------------------------------------------------------------------ baseline
+
+    def get_baseline_established_at(self) -> str | None:
+        return self.get_meta("baseline_established_at")
+
+    def set_baseline_established_at(self, ts: str) -> None:
+        self.set_meta("baseline_established_at", ts)
+
     def scans_for_sha(self, sha256: str) -> list[sqlite3.Row]:
         with self._connect() as conn:
             return conn.execute(
@@ -264,6 +272,14 @@ class State:
             ).fetchone()
         return _row_to_record(row) if row else None
 
+    def quarantine_total_size(self) -> int:
+        """Sum of payload sizes (bytes) of all non-restored quarantine entries."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(size), 0) AS total FROM quarantines WHERE state != 'restored'"
+            ).fetchone()
+        return int(row["total"])
+
     def delete_quarantine(self, quarantine_id: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM quarantines WHERE id=?", (quarantine_id,))
@@ -277,6 +293,12 @@ class State:
                 "ON CONFLICT(sha256) DO UPDATE SET path=excluded.path, reason=excluded.reason",
                 (sha256, path, reason, now_iso()),
             )
+
+    def disallow(self, sha256: str) -> bool:
+        """Remove ``sha256`` from the allowlist. Returns True if a row was deleted."""
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM allowlist WHERE sha256=?", (sha256,))
+        return cursor.rowcount > 0
 
     def is_allowed(self, sha256: str) -> bool:
         with self._connect() as conn:

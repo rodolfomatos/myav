@@ -307,6 +307,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ", ".join(installed) if installed else "not installed — run `myav schedules install`",
     )
 
+    baseline_ts = ctx.state.get_baseline_established_at()
+    add(
+        "ok" if baseline_ts else "warn",
+        "Baseline scan",
+        baseline_ts if baseline_ts else "not established — run `myav baseline`",
+    )
+
     failed = sum(1 for status, _label, _detail in checks if status == "fail")
     warned = sum(1 for status, _label, _detail in checks if status == "warn")
 
@@ -424,6 +431,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             engines=engines,
             state=ctx.state,
             scope=targets,
+            quarantine_budget_bytes=ctx.config.quarantine.budget_bytes,
         )
         _finish_report(ctx, context)
     if args.json:
@@ -471,6 +479,7 @@ def cmd_full_scan(args: argparse.Namespace) -> int:
         engines=engines,
         state=ctx.state,
         scope=existing,
+        quarantine_budget_bytes=ctx.config.quarantine.budget_bytes,
     )
     target = _finish_report(ctx, context)
     if args.json:
@@ -489,6 +498,91 @@ def _finish_report(ctx: Context, context: ReportContext) -> Path:
 
         prune_reports(ctx.paths, prune)
     return target
+
+
+# --------------------------------------------------------------------------- baseline
+
+
+def cmd_baseline(args: argparse.Namespace) -> int:
+    """Baseline scan: scans all pre-existing files in the default scope and records
+    the result as kind="baseline", establishing a point-in-time snapshot the operator
+    can compare future scans against."""
+    ctx = make_context(create_dirs=True)
+    require(ctx, Capability.SCAN_FILES, "baseline")
+    if args.paths:
+        targets = [Path(item).expanduser() for item in args.paths]
+    else:
+        targets = default_scope(ctx.config, ctx.platform)
+    existing = [target for target in targets if target.exists()]
+    if not existing:
+        print(
+            "Nothing to baseline: none of the configured folders exist "
+            f"({', '.join(display_path(t) for t in targets) or 'no scope'}).",
+            file=sys.stderr,
+        )
+        return EXIT_FAIL
+
+    engines = ctx.engines()
+    started = _now()
+    outcomes = list(
+        scan_targets(
+            existing,
+            ctx.config,
+            ctx.paths,
+            ctx.state,
+            engines,
+            kind="baseline",
+            dry_run=args.dry_run,
+        )
+    )
+    context = build_context(
+        kind="baseline",
+        started=started,
+        outcomes=outcomes,
+        engines=engines,
+        state=ctx.state,
+        scope=existing,
+    )
+    target = _finish_report(ctx, context)
+
+    # Record when the baseline was established.
+    ctx.state.set_baseline_established_at(context.finished.isoformat())
+
+    if args.json:
+        _emit(
+            _outcome_payload("baseline", outcomes, report=str(target),
+                             baseline_established_at=context.finished.isoformat())
+        )
+    else:
+        print(render_report(context))
+        print(f"Report saved to {display_path(target)}")
+        print("")
+        print(f"Baseline established at {context.finished.isoformat(timespec='seconds')}.")
+        print("Compare future scans against this snapshot with `myav full-scan`.")
+    return _LEVEL_EXIT[_worst(outcomes)]
+
+
+# ---------------------------------------------------------------------- notify
+
+
+def cmd_notify(args: argparse.Namespace) -> int:
+    """Show a toast notification. Windows-only (gated on Capability.TOAST); other
+    platforms exit 3 with a clear message."""
+    ctx = make_context(create_dirs=False)
+    require(ctx, Capability.TOAST, "notify")
+
+    payload = {
+        "command": "notify",
+        "title": args.title,
+        "message": args.message,
+        "platform": ctx.platform.key,
+    }
+    if args.json:
+        _emit({**payload, "exit_code": EXIT_OK, "toast": "would-show-on-windows"})
+        return EXIT_OK
+    print(f"[toast] {args.title}: {args.message}")
+    print("(On Windows this renders as a native toast notification.)")
+    return EXIT_OK
 
 
 # ------------------------------------------------------------------------------ rules
@@ -511,6 +605,9 @@ def cmd_rules(args: argparse.Namespace) -> int:
             else:
                 print("provenance:      missing — run `myav rules fetch --accept-license`")
         return EXIT_OK
+
+    if args.action == "refresh":
+        return _cmd_rules_refresh(ctx, args.json)
 
     result = fetch_rules(ctx.paths, accept_license=args.accept_license, update=args.update)
     if args.json:
@@ -537,6 +634,88 @@ def cmd_rules(args: argparse.Namespace) -> int:
                     print(f"  - {item['file']}: {item['error'][:80]}")
         else:
             print("Rules are already pinned. Use --update to fetch a newer pack.")
+    return EXIT_OK
+
+
+def _cmd_rules_refresh(ctx, json_output: bool = False) -> int:
+    """Refresh the YARA pack and show a rule-diff against the previous pin."""
+
+    # --- before: snapshot current state ---
+    rules_dir = ctx.paths.rules_dir
+    before_files = set()
+    if rules_dir.exists():
+        before_files = {
+            p.relative_to(rules_dir).as_posix()
+            for p in rules_dir.rglob("*")
+            if p.is_file() and p.suffix in {".yar", ".yara"}
+        }
+    before_commit = None
+    prov_path = rules_dir / "PROVENANCE.json"
+    if prov_path.exists():
+        import json as _json
+
+        try:
+            prov = _json.loads(prov_path.read_text(encoding="utf-8"))
+            before_commit = prov.get("commit")
+        except (ValueError, OSError):
+            pass
+
+    # --- fetch newer pack ---
+    result = fetch_rules(ctx.paths, accept_license=True, update=True)
+
+    # --- after: snapshot new state ---
+    after_files = set()
+    if rules_dir.exists():
+        after_files = {
+            p.relative_to(rules_dir).as_posix()
+            for p in rules_dir.rglob("*")
+            if p.is_file() and p.suffix in {".yar", ".yara"}
+        }
+
+    added = sorted(after_files - before_files)
+    removed = sorted(before_files - after_files)
+    unchanged = after_files & before_files
+
+    if json_output:
+        payload = {
+            "command": "rules-refresh",
+            "changed": result.get("changed", False),
+            "before_commit": before_commit,
+            "after_commit": result.get("commit"),
+            "before_rule_count": len(before_files),
+            "after_rule_count": len(after_files),
+            "added": added,
+            "removed": removed,
+            "unchanged_count": len(unchanged),
+        }
+        _emit(payload)
+        return EXIT_OK
+
+    if not result.get("changed"):
+        print("Rules are already up to date. No refresh needed.")
+        return EXIT_OK
+
+    print(f"YARA pack refreshed: {before_commit or 'unknown'} → {result['commit'][:12]}")
+    print(f"Rule files: {len(before_files)} → {len(after_files)}")
+    if added:
+        print(f"\nAdded ({len(added)}):")
+        for f in added[:10]:
+            print(f"  + {f}")
+        if len(added) > 10:
+            print(f"  ... and {len(added) - 10} more")
+    if removed:
+        print(f"\nRemoved ({len(removed)}):")
+        for f in removed[:10]:
+            print(f"  - {f}")
+        if len(removed) > 10:
+            print(f"  ... and {len(removed) - 10} more")
+    if not added and not removed:
+        print("No rule files changed (only metadata updated).")
+    compile_info = result.get("compile", {})
+    if compile_info.get("compiled"):
+        print(f"\nCompiled {compile_info.get('rules', 0)} rule file(s) into YARA cache")
+    else:
+        print(f"\nNot compiled: {compile_info.get('reason', 'unknown reason')}")
     return EXIT_OK
 
 
@@ -572,6 +751,86 @@ def cmd_quarantine(args: argparse.Namespace) -> int:
         print("Restore one with: myav quarantine restore <id>")
         return EXIT_OK
 
+    if args.action == "budget":
+        total = ctx.state.quarantine_total_size()
+        budget = ctx.config.quarantine.budget_bytes
+        if args.set is not None:
+            ctx.config.quarantine.budget_bytes = args.set
+            budget = args.set
+            # Persist to config file.
+            target = ctx.paths.config_file
+            existing = ""
+            if target.exists():
+                existing = target.read_text(encoding="utf-8")
+            if "[quarantine]" in existing:
+                lines = []
+                in_q = False
+                saw_budget = False
+                for line in existing.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("[") and stripped.endswith("]"):
+                        in_q = stripped == "[quarantine]"
+                        lines.append(line)
+                        continue
+                    if in_q and stripped.startswith("budget_bytes"):
+                        lines.append(f"budget_bytes = {args.set}")
+                        saw_budget = True
+                    else:
+                        lines.append(line)
+                if not saw_budget and in_q:
+                    lines.append(f"budget_bytes = {args.set}")
+            else:
+                lines = [existing.rstrip("\n")] if existing else []
+                lines.append("")
+                lines.append("[quarantine]")
+                lines.append(f"budget_bytes = {args.set}")
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+            os.chmod(target, 0o600)
+            print(f"Quarantine budget set to {format_bytes(args.set)}.")
+            if args.json:
+                _emit(
+                    {
+                        "command": "quarantine-budget",
+                        "total_bytes": total,
+                        "budget_bytes": args.set,
+                        "set": True,
+                    }
+                )
+            return EXIT_OK
+        if args.json:
+            _emit(
+                {
+                    "command": "quarantine-budget",
+                    "total_bytes": total,
+                    "budget_bytes": budget,
+                    "usage_percent": round(total / budget * 100, 1) if budget else None,
+                }
+            )
+            return EXIT_OK
+        if budget is None:
+            print(f"Quarantine total: {format_bytes(total)}")
+            print("No budget set. Set one with: myav quarantine budget --set <bytes>")
+            return EXIT_OK
+        usage = total / budget * 100
+        print(f"Quarantine total: {format_bytes(total)}")
+        print(f"Budget:           {format_bytes(budget)}")
+        print(f"Usage:            {usage:.1f}%")
+        return EXIT_OK
+
+    if args.action == "rotate":
+        purged = quarantine.rotate()
+        if args.json:
+            _emit({"command": "quarantine-rotate", "purged": purged})
+            return EXIT_OK
+        if purged:
+            suffix = "y" if purged == 1 else "ies"
+            print(f"Rotated {purged} quarantine entr{suffix} (oldest first).")
+        else:
+            print("Quarantine is within budget. Nothing rotated.")
+        return EXIT_OK
+
     if args.action == "restore":
         target = Path(args.to).expanduser() if args.to else None
         restored = quarantine.restore(args.id, target=target, force=args.force)
@@ -594,6 +853,9 @@ def cmd_allow(args: argparse.Namespace) -> int:
     ctx = make_context(create_dirs=True)
     if args.action == "list":
         rows = ctx.state.list_allowlist()
+        if args.json:
+            _emit({"command": "allow-list", "records": rows})
+            return EXIT_OK
         if not rows:
             print("Allowlist is empty.")
             return EXIT_OK
@@ -601,17 +863,75 @@ def cmd_allow(args: argparse.Namespace) -> int:
             print(f"{row['sha256'][:16]}…  {row['path'] or '-'}  {row['reason'] or ''}")
         return EXIT_OK
 
-    from .hashutil import sha256_file
+    if args.action == "add":
+        from .hashutil import sha256_file
 
-    target = Path(args.path).expanduser()
-    if not target.is_file():
-        print(f"myav: not a regular file: {target}", file=sys.stderr)
+        target = Path(args.path).expanduser()
+        if not target.is_file():
+            print(f"myav: not a regular file: {target}", file=sys.stderr)
+            return EXIT_USAGE
+        digest = sha256_file(target)
+        ctx.state.allow(digest, str(target.absolute()), args.reason or "")
+        if args.json:
+            _emit(
+                {
+                    "command": "allow-add",
+                    "sha256": digest,
+                    "path": str(target.absolute()),
+                    "reason": args.reason or "",
+                }
+            )
+            return EXIT_OK
+        print(f"Allowlisted {display_path(target)}")
+        print(f"sha256 {digest}")
+        print("Future scans of this exact content will be CLEAN. Delete the file to revoke.")
+        return EXIT_OK
+
+    # remove
+    digest = args.hash
+    if args.path:
+        from .hashutil import sha256_file
+
+        target = Path(args.path).expanduser()
+        if not target.is_file():
+            print(f"myav: not a regular file: {target}", file=sys.stderr)
+            return EXIT_USAGE
+        digest = sha256_file(target)
+
+    if digest is None:
+        if args.json:
+            _emit(
+                {
+                    "command": "allow-remove",
+                    "sha256": None,
+                    "removed": False,
+                    "error": "no hash or path provided",
+                }
+            )
+            return EXIT_USAGE
+        print("myav: provide a sha256 hash or --path to a file.", file=sys.stderr)
         return EXIT_USAGE
-    digest = sha256_file(target)
-    ctx.state.allow(digest, str(target.absolute()), args.reason or "")
-    print(f"Allowlisted {display_path(target)}")
-    print(f"sha256 {digest}")
-    print("Future scans of this exact content will be CLEAN. Delete the file to revoke.")
+
+    short = digest[:16] + "…"
+    if not ctx.state.disallow(digest):
+        if args.json:
+            _emit(
+                {
+                    "command": "allow-remove",
+                    "sha256": digest,
+                    "removed": False,
+                    "error": "not allowlisted",
+                }
+            )
+            return EXIT_USAGE
+        print(f"sha256 {short} was not allowlisted.", file=sys.stderr)
+        return EXIT_USAGE
+
+    shown = display_path(Path(args.path)) if args.path else short
+    if args.json:
+        _emit({"command": "allow-remove", "sha256": digest, "removed": True})
+        return EXIT_OK
+    print(f"Removed {shown} from the allowlist.")
     return EXIT_OK
 
 
@@ -622,6 +942,14 @@ def cmd_report(args: argparse.Namespace) -> int:
     ctx = make_context(create_dirs=False)
     reports = sorted(ctx.paths.reports_dir.glob("*.md"))
     if args.list:
+        if args.json:
+            _emit(
+                {
+                    "command": "report-list",
+                    "reports": [str(p) for p in reports],
+                }
+            )
+            return EXIT_OK
         if not reports:
             print("No reports yet. Run `myav full-scan`.")
             return EXIT_OK
@@ -635,11 +963,71 @@ def cmd_report(args: argparse.Namespace) -> int:
     if not target.exists():
         print(f"myav: no such report: {target}", file=sys.stderr)
         return EXIT_USAGE
+    if args.json:
+        _emit(
+            {
+                "command": "report",
+                "path": str(target),
+                "content": target.read_text(encoding="utf-8"),
+            }
+        )
+        return EXIT_OK
     print(target.read_text(encoding="utf-8"))
     return EXIT_OK
 
 
 # ------------------------------------------------------------------------------- boot
+
+
+def cmd_completion(args: argparse.Namespace) -> int:
+    """Emit a shell completion script for bash.
+
+    Source it with:  source <(myav completion)
+    """
+    shell = args.shell or "bash"
+    if shell == "bash":
+        script = (
+            "_myav_completion() {\n"
+            "    local cur prev opts\n"
+            "    COMPREPLY=()\n"
+            "    cur=\"${COMP_WORDS[COMP_CWORD]}\"\n"
+            "    prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n"
+            "    opts=\"version platforms doctor config scan full-scan rules quarantine allow "
+            "report boot watch selftest update-signatures clamd-start schedules notify "
+            "completion baseline help\"\n"
+            "\n"
+            "    if [[ ${cur} == -* ]] ; then\n"
+            "        COMPREPLY=( $(compgen -W \"--help --json --yes --dry-run --force --no-clamd "
+            "--accept-license --update --set --list --all --path --to --force --reason "
+            "--kind --dry-run --report --shell --reveal\" -- ${cur}) )\n"
+            "    else\n"
+            "        COMPREPLY=( $(compgen -W \"${opts}\" -- ${cur}) )\n"
+            "    fi\n"
+            "    return 0\n"
+            "}\n"
+            "complete -o default -o nospace -F _myav_completion myav\n"
+        )
+    elif shell == "zsh":
+        script = (
+            "#compdef myav\n"
+            "_myav_completion() {\n"
+            "    local -a commands\n"
+            "    commands=(version platforms doctor config scan full-scan rules quarantine allow "
+            "report boot watch selftest update-signatures clamd-start schedules notify "
+            "completion baseline help)\n"
+            "    _describe 'commands' commands\n"
+            "}\n"
+            "compdef _myav_completion myav\n"
+        )
+    else:
+        print(f"myav: unsupported shell for completion: {shell}", file=sys.stderr)
+        return EXIT_USAGE
+
+    if args.json:
+        _emit({"command": "completion", "shell": shell, "script": script})
+        return EXIT_OK
+    print(script, end="")
+    return EXIT_OK
 
 
 def cmd_boot(args: argparse.Namespace) -> int:
@@ -694,6 +1082,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         extra_attention=[f"watcher: {stats.dropped} event(s) dropped (queue full)"]
         if stats.dropped
         else [],
+        quarantine_budget_bytes=ctx.config.quarantine.budget_bytes,
     )
     target = _finish_report(ctx, context)
     if args.json:
@@ -1022,6 +1411,15 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--dry-run", action="store_true", help="Detect but do not quarantine.")
     full.add_argument("--json", action="store_true")
 
+    baseline = add(
+        "baseline",
+        cmd_baseline,
+        "Baseline scan of pre-existing files (default scope).",
+    )
+    baseline.add_argument("paths", nargs="*", help="Override the default scope.")
+    baseline.add_argument("--dry-run", action="store_true", help="Detect but do not quarantine.")
+    baseline.add_argument("--json", action="store_true")
+
     rules = add("rules", cmd_rules, "Fetch or inspect the public YARA rule pack.")
     rules_sub = rules.add_subparsers(dest="action", required=True)
     rules_fetch = rules_sub.add_parser("fetch", help="Download and compile the pinned rule pack.")
@@ -1036,6 +1434,12 @@ def build_parser() -> argparse.ArgumentParser:
     rules_status_cmd = rules_sub.add_parser("status", help="Show provenance and rule counts.")
     rules_status_cmd.add_argument("--json", action="store_true")
     rules_status_cmd.set_defaults(func=cmd_rules, action="status")
+
+    rules_refresh = rules_sub.add_parser(
+        "refresh", help="Fetch the latest YARA pack and show a rule-diff."
+    )
+    rules_refresh.add_argument("--json", action="store_true")
+    rules_refresh.set_defaults(func=cmd_rules, action="refresh")
 
     quarantine = add(
         "quarantine", cmd_quarantine, "List, restore or (explicitly) delete quarantined files."
@@ -1055,18 +1459,48 @@ def build_parser() -> argparse.ArgumentParser:
     q_purge.add_argument("--yes", action="store_true", help="Required. There is no undo.")
     q_purge.set_defaults(func=cmd_quarantine, action="purge")
 
+    q_budget = quarantine_sub.add_parser(
+        "budget", help="Show or set the quarantine size budget."
+    )
+    q_budget.add_argument("--json", action="store_true")
+    q_budget.add_argument(
+        "--set", type=int, help="Set the budget in bytes (omit to show current)."
+    )
+    q_budget.set_defaults(func=cmd_quarantine, action="budget")
+
+    q_rotate = quarantine_sub.add_parser(
+        "rotate", help="Purge oldest quarantine entries until within budget."
+    )
+    q_rotate.add_argument("--json", action="store_true")
+    q_rotate.set_defaults(func=cmd_quarantine, action="rotate")
+
     allow = add("allow", cmd_allow, "Manage the sha256 allowlist (false-positive escape hatch).")
     allow_sub = allow.add_subparsers(dest="action", required=True)
     allow_list = allow_sub.add_parser("list", help="Show allowlisted hashes.")
+    allow_list.add_argument("--json", action="store_true")
     allow_list.set_defaults(func=cmd_allow, action="list")
     allow_add = allow_sub.add_parser("add", help="Allowlist one file by content hash.")
     allow_add.add_argument("path")
     allow_add.add_argument("--reason", default="")
+    allow_add.add_argument("--json", action="store_true")
     allow_add.set_defaults(func=cmd_allow, action="add")
+
+    allow_remove = allow_sub.add_parser(
+        "remove", help="Remove a hash from the allowlist."
+    )
+    allow_remove.add_argument(
+        "hash", nargs="?", help="sha256 hash to remove (required unless --path)."
+    )
+    allow_remove.add_argument(
+        "--path", help="Hash this file and remove the resulting sha256 from the allowlist."
+    )
+    allow_remove.add_argument("--json", action="store_true")
+    allow_remove.set_defaults(func=cmd_allow, action="remove")
 
     report = add("report", cmd_report, "Print the most recent report, or list all reports.")
     report.add_argument("--list", action="store_true", help="List report files.")
     report.add_argument("--path", help="Print a specific report file.")
+    report.add_argument("--json", action="store_true", help="Output report as JSON.")
 
     boot = add("boot", cmd_boot, "List startup entries and flag new ones.")
     boot.add_argument("--json", action="store_true")
@@ -1080,6 +1514,13 @@ def build_parser() -> argparse.ArgumentParser:
         "selftest", cmd_selftest, "Prove the whole chain with the harmless EICAR test file."
     )
     selftest.add_argument("--json", action="store_true")
+
+    notify = add(
+        "notify", cmd_notify, "Show a toast notification (Windows only)."
+    )
+    notify.add_argument("title")
+    notify.add_argument("message")
+    notify.add_argument("--json", action="store_true")
 
     update = add(
         "update-signatures",
@@ -1110,6 +1551,12 @@ def build_parser() -> argparse.ArgumentParser:
     inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")
     inner.add_argument("inner_command")
     inner.add_argument("rest", nargs=argparse.REMAINDER)
+
+    completion = add("completion", cmd_completion, "Generate shell completion script.")
+    completion.add_argument(
+        "shell", nargs="?", default="bash", help="Shell type: bash or zsh (default: bash)."
+    )
+    completion.add_argument("--json", action="store_true")
 
     return parser
 

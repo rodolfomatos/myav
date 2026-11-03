@@ -13,6 +13,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .archive import is_archive, scan_archive
 from .config import Config
 from .engine import EngineResult
 from .engines.clamav import ClamAVEngine, SignatureInfo
@@ -192,11 +193,30 @@ def scan_targets(
     for target in targets:
         if target.is_dir():
             for file_path in walk_directory(target, config):
-                yield scan_file(
+                yield from _scan_one(
                     file_path, config, paths, state, engines, kind=kind, dry_run=dry_run
                 )
         else:
-            yield scan_file(target, config, paths, state, engines, kind=kind, dry_run=dry_run)
+            yield from _scan_one(
+                target, config, paths, state, engines, kind=kind, dry_run=dry_run
+            )
+
+
+def _scan_one(
+    file_path: Path,
+    config: Config,
+    paths: Paths,
+    state: State,
+    engines: Engines,
+    *,
+    kind: str = "manual",
+    dry_run: bool = False,
+) -> Iterator[Outcome]:
+    """Scan a single path. If it is an archive, scan its contents instead."""
+    if is_archive(file_path):
+        yield from scan_archive(file_path, config, paths, state, engines, kind=kind)
+    else:
+        yield scan_file(file_path, config, paths, state, engines, kind=kind, dry_run=dry_run)
 
 
 def walk_directory(root: Path, config: Config) -> Iterator[Path]:

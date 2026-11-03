@@ -28,6 +28,15 @@ def test_schema_version(state: State) -> None:
     assert state.get_meta("missing", "fallback") == "fallback"
 
 
+def test_baseline_meta(state: State) -> None:
+    assert state.get_baseline_established_at() is None
+    ts = "2026-11-03T16:00:00+00:00"
+    state.set_baseline_established_at(ts)
+    assert state.get_baseline_established_at() == ts
+    state.set_baseline_established_at("2026-11-04T10:00:00+00:00")
+    assert state.get_baseline_established_at() == "2026-11-04T10:00:00+00:00"
+
+
 def test_record_scan_and_stats(state: State) -> None:
     state.record_scan(
         path="/tmp/a", size=1, sha256="a" * 64, verdict="CLEAN", engines=[], kind="manual"
@@ -84,6 +93,15 @@ def test_allowlist(state: State) -> None:
     assert rows[0]["reason"] == "known good"
     state.allow("f" * 64, path="/tmp/b", reason="updated")
     assert state.list_allowlist()[0]["reason"] == "updated"
+
+
+def test_disallow(state: State) -> None:
+    assert not state.disallow("f" * 64)  # not present -> False
+    state.allow("f" * 64, path="/tmp/a", reason="known good")
+    assert state.is_allowed("f" * 64)
+    assert state.disallow("f" * 64)  # present -> True
+    assert not state.is_allowed("f" * 64)
+    assert not state.disallow("f" * 64)  # already removed -> False
 
 
 def test_boot_apply_first_run_then_diff(state: State) -> None:
@@ -149,3 +167,22 @@ def test_quarantine_tags_roundtrip(state: State, tag: str) -> None:
     record.tag = tag
     state.add_quarantine(record)
     assert state.get_quarantine(record.id).tag == tag
+
+
+def test_quarantine_total_size(state: State) -> None:
+    assert state.quarantine_total_size() == 0
+    from myav.state import QuarantineRecord
+
+    r1 = QuarantineRecord(
+        id="id1", original_path="/a", sha256="a" * 64, size=100, mtime=1.0,
+        mode=0o600, tag="malicious", reason="r", payload="x.bin",
+    )
+    r2 = QuarantineRecord(
+        id="id2", original_path="/b", sha256="b" * 64, size=200, mtime=1.0,
+        mode=0o600, tag="malicious", reason="r", payload="y.bin",
+    )
+    state.add_quarantine(r1)
+    state.add_quarantine(r2)
+    assert state.quarantine_total_size() == 300
+    state.set_quarantine_state("id1", "restored")
+    assert state.quarantine_total_size() == 200

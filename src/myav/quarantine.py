@@ -245,6 +245,35 @@ class Quarantine:
         self.state.delete_quarantine(record.id)
         return True
 
+    # ------------------------------------------------------------------- rotate
+
+    def rotate(self, budget_bytes: int | None = None) -> int:
+        """Enforce a size budget on quarantine by purging oldest entries first.
+
+        Returns the number of entries purged. If no budget is set (or the budget
+        is already respected), returns 0 and changes nothing.
+        """
+        if budget_bytes is None:
+            budget_bytes = self.config.quarantine.budget_bytes if self.config else None
+        if budget_bytes is None:
+            return 0
+
+        total = self.state.quarantine_total_size()
+        if total <= budget_bytes:
+            return 0
+
+        records = self.state.list_quarantines(include_restored=False)
+        # list_quarantines is ordered by ts DESC; reverse to get oldest first.
+        records = sorted(records, key=lambda r: r.ts)
+        purged = 0
+        for record in records:
+            if total <= budget_bytes:
+                break
+            self.purge(record.id, yes=True)
+            total -= record.size
+            purged += 1
+        return purged
+
 
 def _is_windows_path(path: Path) -> bool:
     try:
