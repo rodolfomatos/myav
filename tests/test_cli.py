@@ -790,6 +790,47 @@ def test_research_behaviour_baseline_both_actions(fake, tmp_path, capsys) -> Non
     ]) == 2
 
 
+# ------------------------------------------------------------------- research behaviour-detect
+
+
+def test_research_behaviour_detect_clean_not_flagged(fake, tmp_path, capsys) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "clean.txt").write_text("hello world")
+
+    assert cli.main(["research", "behaviour-detect", str(corpus)]) == 0
+    out = capsys.readouterr().out
+    assert "Behaviour detection" in out
+    assert "Files scanned: 1" in out
+    assert "No behavioural matches." in out
+
+
+def test_research_behaviour_detect_canary(fake, tmp_path, capsys) -> None:
+    canary = tmp_path / "canary.txt"
+    canary.write_text("canary content")
+
+    assert cli.main(["research", "behaviour-detect", str(canary)]) == 0
+    out = capsys.readouterr().out
+    assert "ransomware-canary" in out
+    assert "high" in out
+
+
+def test_research_behaviour_detect_json(fake, tmp_path, capsys) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "clean.txt").write_text("hello world")
+
+    assert cli.main(["research", "behaviour-detect", str(corpus), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "research-behaviour-detect"
+    assert payload["total_files_scanned"] == 1
+    assert payload["match_count"] == 0
+
+
+def test_research_behaviour_detect_not_a_path(fake, capsys) -> None:
+    assert cli.main(["research", "behaviour-detect", "/nonexistent/path"]) == 2
+
+
 # ----------------------------------------------------------------------- quarantine
 
 

@@ -21,7 +21,6 @@ tier: AES-heavy
 
 | ID | Title | Priority | Notes |
 |----|-------|----------|-------|
-| T029 | Purpose-specific behavioural detection (ransomware, fileless/LOTL, documents) | high | Research-01 |
 | T030 | ML with scientific rigour — EMBER baseline + temporal evaluation | medium | Research-01 |
 | T031 | Lightweight sandbox — sufficient observation time | medium | Research-01 |
 | T032 | Campaign correlation graphs — beyond isolated files | medium | Research-01 |
@@ -66,6 +65,7 @@ tier: AES-heavy
 | T026 | False-positive baseline study (research track) | `pytest` (326 pass), `ruff` clean, coverage 91.67% |
 | T027 | Honest measurement — FPR + FNR + confusion matrix (research track) | `pytest` (333 pass), `ruff` clean, coverage 91.81% |
 | T028 | User behaviour baseline (research track) | `pytest` (351 pass), `ruff` clean, coverage 92.03% |
+| T029 | Purpose-specific behavioural detection (research track) | `pytest` (365 pass), `ruff` clean, coverage 92.08% |
 
 ## Blocked
 
@@ -92,3 +92,4 @@ tier: AES-heavy
 | 2026-11-03 | T026 | Research track unlocked: `verify-live.sh` → HEALTHY on 2026-11-03. Research track charter created (`docs/RESEARCH_TRACK.md`). First research measurement: false-positive baseline study (`myav research fp-baseline`), answering open question O3 from research-review.md §8. Key lesson: `EngineResult.fired` is a computed property of `status`, not a constructor field — passing `fired=` raises TypeError caught by `_safe_engine`, producing UNKNOWN verdicts.
 | 2026-11-03 | T027 | Honest measurement extended: `myav research fp-baseline <dir> --malicious-dir <dir>` now measures both false-positive rate and false-negative rate, producing a full confusion matrix (TN/FP/FN/TP), precision, recall. Key lesson: `walk_directory` lives in `myav.pipeline`, not `myav.paths` — wrong import caused ImportError at test collection time.
 | 2026-11-03 | T028 | User behaviour baseline: `myav research behaviour-baseline <dir> --learn|--check` learns a baseline of processes, hours, directories, connections and modified files, then checks for deviations. Key lesson: baseline must be persisted in the real state DB (not a temp DB) so `learn` and `check` can share it across CLI invocations.
+| 2026-11-03 | T029 | Purpose-specific behavioural detection: `myav research behaviour-detect <path>` runs heuristic detectors for ransomware (canary/bulk-rename), fileless/LOTL (obfuscated scripts) and documents (macros). Key lesson: heuristic detectors have false positives — results are alerts only, labelled as research, never shipped as Core protection.

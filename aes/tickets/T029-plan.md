@@ -3,7 +3,7 @@ ticket: T029
 title: Purpose-specific behavioural detection (ransomware, fileless/LOTL, documents)
 sprint: research-01
 priority: high
-status: pending
+status: done
 created: 2026-11-03
 ---
 

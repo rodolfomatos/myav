@@ -1158,6 +1158,8 @@ def cmd_research(args: argparse.Namespace) -> int:
         return _cmd_research_fp_baseline(args)
     if args.action == "behaviour-baseline":
         return _cmd_research_behaviour_baseline(args)
+    if args.action == "behaviour-detect":
+        return _cmd_research_behaviour_detect(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1357,6 +1359,70 @@ def _cmd_research_behaviour_baseline(args: argparse.Namespace) -> int:
     print(
         "This is a research measurement, not a detection verdict. "
         "Deviations are alerts only — nothing is blocked."
+    )
+    return EXIT_OK
+
+
+def _cmd_research_behaviour_detect(args: argparse.Namespace) -> int:
+    """Run purpose-specific behavioural detectors against *path*.
+
+    Read-only: scans files but never writes, quarantines, or blocks.
+    Detectors: ransomware canary/bulk-rename, fileless/LOTL obfuscated
+    scripts, document macros.
+    """
+    path = Path(args.path).expanduser()
+    if not path.exists():
+        print(f"myav: no such path: {path}", file=sys.stderr)
+        return EXIT_USAGE
+
+    from .research.behaviour_detectors import detect_all
+
+    result = detect_all(
+        path,
+        canary_names=None,
+        window_files=args.window_files,
+        suspicious_ratio=args.suspicious_ratio,
+        entropy_threshold=args.entropy_threshold,
+    )
+
+    if args.json:
+        payload = {
+            "command": "research-behaviour-detect",
+            "path": result.path,
+            "total_files_scanned": result.total_files_scanned,
+            "match_count": result.match_count,
+            "matches": [
+                {
+                    "detector": m.detector,
+                    "severity": m.severity,
+                    "description": m.description,
+                    "path": m.path,
+                    "detail": m.detail,
+                }
+                for m in result.matches
+            ],
+        }
+        _emit(payload)
+        return EXIT_OK
+
+    print(f"Behaviour detection: {result.path}")
+    print(f"  Files scanned: {result.total_files_scanned}")
+    print(f"  Matches:       {result.match_count}")
+    print("")
+    if result.matches:
+        for m in result.matches:
+            print(
+                f"  [{m.severity:<5}] {m.detector:<30} {m.path}"
+            )
+            print(f"      {m.description}")
+            if m.detail:
+                print(f"      {m.detail}")
+    else:
+        print("  No behavioural matches.")
+    print("")
+    print(
+        "This is a research measurement, not a detection verdict. "
+        "Matches are heuristic alerts — nothing is blocked."
     )
     return EXIT_OK
 
@@ -1832,6 +1898,36 @@ def build_parser() -> argparse.ArgumentParser:
     research_behaviour.add_argument("--json", action="store_true")
     research_behaviour.set_defaults(
         func=cmd_research, action="behaviour-baseline"
+    )
+
+    research_detect = research_sub.add_parser(
+        "behaviour-detect",
+        help="Run purpose-specific behavioural detectors (ransomware, fileless/LOTL, documents).",
+    )
+    research_detect.add_argument(
+        "path", help="Path or directory to scan (read-only)."
+    )
+    research_detect.add_argument(
+        "--window-files",
+        type=int,
+        default=10,
+        help="Min files in window for bulk-rename detector (default: 10).",
+    )
+    research_detect.add_argument(
+        "--suspicious-ratio",
+        type=float,
+        default=0.6,
+        help="Suspicious ratio threshold for bulk-rename (default: 0.6).",
+    )
+    research_detect.add_argument(
+        "--entropy-threshold",
+        type=float,
+        default=4.5,
+        help="Entropy threshold (bits/byte) for obfuscated script detector (default: 4.5).",
+    )
+    research_detect.add_argument("--json", action="store_true")
+    research_detect.set_defaults(
+        func=cmd_research, action="behaviour-detect"
     )
 
     inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")
