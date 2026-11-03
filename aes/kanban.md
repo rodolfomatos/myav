@@ -57,6 +57,7 @@ tier: AES-heavy
 | T022 | Shell completion | `pytest` (306 pass), `ruff` clean, coverage 91.73% |
 | T023 | --json for every command | `pytest` (306 pass), `ruff` clean, coverage 91.73% |
 | T024 | Per-file progress line for long full scans | `pytest` (309 pass), `ruff` clean, coverage 91.72% |
+| T025 | Visual progress bar for long full scans | `pytest` (318 pass), `ruff` clean, coverage 91.62% |
 
 ## Blocked
 

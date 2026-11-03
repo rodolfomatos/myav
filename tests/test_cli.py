@@ -227,14 +227,17 @@ def test_full_scan_nothing_to_scan(fake, tmp_path, monkeypatch, capsys) -> None:
     assert "Nothing to scan" in capsys.readouterr().err
 
 
-def test_full_scan_shows_progress_on_stderr(fake, tmp_path, capsys) -> None:
+def test_full_scan_shows_progress_on_stderr(fake, tmp_path, capsys, monkeypatch) -> None:
+    import myav.progress as progress_module
+
+    monkeypatch.setattr(progress_module, "_is_tty", lambda stream: True)
     folder = tmp_path / "docs"
     folder.mkdir()
     (folder / "a.txt").write_text("a")
     (folder / "b.txt").write_text("b")
     assert cli.main(["full-scan", str(folder)]) == 0
     err = capsys.readouterr().err
-    assert "[progress]" in err
+    assert "█" in err or "░" in err
     assert "2/2" in err
 
 

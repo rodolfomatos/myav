@@ -44,6 +44,7 @@ from .paths import (
 )
 from .pipeline import Engines, Outcome, build_engines, default_scope, scan_targets, walk_directory
 from .platforms import Capability, Platform, detect_platform
+from .progress import ProgressBar
 from .quarantine import Quarantine, QuarantineError
 from .report import ReportContext, build_context, render_report, write_report
 from .rules import RulesError
@@ -470,6 +471,8 @@ def cmd_full_scan(args: argparse.Namespace) -> int:
             elif target.is_file():
                 total += 1
 
+    bar = ProgressBar(total) if show_progress else None
+
     engines = ctx.engines()
     started = _now()
     scanned = 0
@@ -484,17 +487,11 @@ def cmd_full_scan(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     ):
         scanned += 1
-        if show_progress and total:
-            pct = scanned / total * 100
-            print(
-                f"\r[progress] {scanned}/{total} ({pct:.0f}%) {outcome.path}",
-                file=sys.stderr,
-                end="",
-                flush=True,
-            )
+        if bar:
+            bar.update(scanned, label=str(outcome.path))
         outcomes.append(outcome)
-    if show_progress and total:
-        print(file=sys.stderr)  # terminate the progress line
+    if bar:
+        bar.close()
 
     context = build_context(
         kind="full",
