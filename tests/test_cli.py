@@ -831,6 +831,78 @@ def test_research_behaviour_detect_not_a_path(fake, capsys) -> None:
     assert cli.main(["research", "behaviour-detect", "/nonexistent/path"]) == 2
 
 
+# ------------------------------------------------------------------- research ml-baseline
+
+
+def test_research_ml_baseline_no_samples(fake, tmp_path, capsys) -> None:
+    assert cli.main(["research", "ml-baseline"]) == 0
+    out = capsys.readouterr().out
+    assert "no samples found" in out
+
+
+def test_research_ml_baseline_with_samples(fake, tmp_path, capsys) -> None:
+    train_dir = tmp_path / "train"
+    test_dir = tmp_path / "test"
+    train_dir.mkdir()
+    test_dir.mkdir()
+
+    for i in range(10):
+        (train_dir / f"ben_{i}.bin").write_bytes(b"\x00" * 50 + b"hello world")
+        (train_dir / f"mal_{i}.bin").write_bytes(b"MZ" + b"\xff" * 100)
+        (test_dir / f"ben_{i}.bin").write_bytes(b"\x00" * 50 + b"hello world")
+        (test_dir / f"mal_{i}.bin").write_bytes(b"MZ" + b"\xff" * 100)
+
+    assert cli.main(
+        ["research", "ml-baseline", "--train-dir", str(train_dir), "--test-dir", str(test_dir)]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "ML baseline" in out
+    assert "False positive rate:" in out
+    assert "False negative rate:" in out
+    assert "Precision:" in out
+    assert "Recall:" in out
+
+
+def test_research_ml_baseline_json(fake, tmp_path, capsys) -> None:
+    train_dir = tmp_path / "train"
+    test_dir = tmp_path / "test"
+    train_dir.mkdir()
+    test_dir.mkdir()
+
+    for i in range(10):
+        (train_dir / f"ben_{i}.bin").write_bytes(b"\x00" * 50 + b"hello world")
+        (train_dir / f"mal_{i}.bin").write_bytes(b"MZ" + b"\xff" * 100)
+        (test_dir / f"ben_{i}.bin").write_bytes(b"\x00" * 50 + b"hello world")
+        (test_dir / f"mal_{i}.bin").write_bytes(b"MZ" + b"\xff" * 100)
+
+    assert cli.main(
+        [
+            "research",
+            "ml-baseline",
+            "--train-dir",
+            str(train_dir),
+            "--test-dir",
+            str(test_dir),
+            "--json",
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "command" in payload or "error" in payload
+    if "error" in payload:
+        pytest.fail(f"ml-baseline returned error: {payload['error']}")
+    assert payload["command"] == "research-ml-baseline"
+    assert payload["split_method"] == "temporal"
+    assert "confusion" in payload
+    assert "false_positive_rate" in payload
+    assert "false_negative_rate" in payload
+    assert "precision" in payload
+    assert "recall" in payload
+
+
+def test_research_ml_baseline_train_dir_not_found(fake, capsys) -> None:
+    assert cli.main(["research", "ml-baseline", "--train-dir", "/nonexistent/train"]) == 2
+
+
 # ----------------------------------------------------------------------- quarantine
 
 

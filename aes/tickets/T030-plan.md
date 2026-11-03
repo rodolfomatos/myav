@@ -3,7 +3,7 @@ ticket: T030
 title: ML with scientific rigour — EMBER baseline + temporal evaluation
 sprint: research-01
 priority: medium
-status: pending
+status: done
 created: 2026-11-03
 ---
 

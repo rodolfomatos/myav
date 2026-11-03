@@ -1160,6 +1160,8 @@ def cmd_research(args: argparse.Namespace) -> int:
         return _cmd_research_behaviour_baseline(args)
     if args.action == "behaviour-detect":
         return _cmd_research_behaviour_detect(args)
+    if args.action == "ml-baseline":
+        return _cmd_research_ml_baseline(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1424,6 +1426,61 @@ def _cmd_research_behaviour_detect(args: argparse.Namespace) -> int:
         "This is a research measurement, not a detection verdict. "
         "Matches are heuristic alerts — nothing is blocked."
     )
+    return EXIT_OK
+
+
+def _cmd_research_ml_baseline(args: argparse.Namespace) -> int:
+    """Train/evaluate a simple ML baseline on EMBER-style features with
+    temporal evaluation. Reports FPR, FNR, precision, recall and confusion
+    matrix — never bare accuracy. Read-only: nothing ships as protection.
+    """
+    train_dir = Path(args.train_dir).expanduser() if args.train_dir else None
+    test_dir = Path(args.test_dir).expanduser() if args.test_dir else None
+
+    if train_dir is not None and not train_dir.exists():
+        print(f"myav: not a directory: {train_dir}", file=sys.stderr)
+        return EXIT_USAGE
+    if test_dir is not None and not test_dir.exists():
+        print(f"myav: not a directory: {test_dir}", file=sys.stderr)
+        return EXIT_USAGE
+
+    from .research.ml_baseline import run_ml_baseline
+
+    result = run_ml_baseline(train_dir, test_dir, temporal=args.temporal)
+
+    if args.json:
+        _emit(result)
+        return EXIT_OK
+
+    print(f"ML baseline: {result.get('split_method', 'unknown')} split")
+    print(f"  Train size: {result.get('train_size', 0)}")
+    print(f"  Test size:  {result.get('test_size', 0)}")
+    print("")
+    if "error" in result:
+        print(f"  Error: {result['error']}")
+        return EXIT_OK
+    c = result["confusion"]
+    print("Confusion matrix:")
+    print(f"  True negative  (clean, not flagged):  {c['true_negative']}")
+    print(f"  False positive (clean, flagged):      {c['false_positive']}")
+    print(f"  False negative (malicious, missed):   {c['false_negative']}")
+    print(f"  True positive  (malicious, flagged):  {c['true_positive']}")
+    print("")
+    print(f"  False positive rate:  {result['false_positive_rate']:.2f}%")
+    print(f"  False negative rate:  {result['false_negative_rate']:.2f}%")
+    print(f"  Precision:            {result['precision']:.2f}%")
+    print(f"  Recall:               {result['recall']:.2f}%")
+    print("")
+    print("This is a research measurement, not a detection verdict.")
+    print(
+        "Temporal evaluation (train=older, test=newer) is used so results "
+        "are honest — random splits overstate performance."
+    )
+    print("")
+    if result.get("top_features"):
+        print("Top features (by |weight|):")
+        for f in result["top_features"]:
+            print(f"  feature[{f['feature_index']}]: importance={f['importance']:.4f}")
     return EXIT_OK
 
 
@@ -1928,6 +1985,27 @@ def build_parser() -> argparse.ArgumentParser:
     research_detect.add_argument("--json", action="store_true")
     research_detect.set_defaults(
         func=cmd_research, action="behaviour-detect"
+    )
+
+    research_ml = research_sub.add_parser(
+        "ml-baseline",
+        help="Train/evaluate ML baseline on EMBER-style features with temporal evaluation.",
+    )
+    research_ml.add_argument(
+        "--train-dir", help="Directory of training samples (read-only)."
+    )
+    research_ml.add_argument(
+        "--test-dir", help="Directory of test samples (read-only)."
+    )
+    research_ml.add_argument(
+        "--temporal",
+        action="store_true",
+        default=True,
+        help="Use temporal split (train=older, test=newer) instead of random.",
+    )
+    research_ml.add_argument("--json", action="store_true")
+    research_ml.set_defaults(
+        func=cmd_research, action="ml-baseline"
     )
 
     inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")
