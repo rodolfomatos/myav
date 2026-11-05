@@ -3,7 +3,7 @@ ticket: T032
 title: Campaign correlation graphs — beyond isolated files
 sprint: research-01
 priority: medium
-status: pending
+status: done
 created: 2026-11-03
 ---
 

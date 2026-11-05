@@ -1164,6 +1164,8 @@ def cmd_research(args: argparse.Namespace) -> int:
         return _cmd_research_ml_baseline(args)
     if args.action == "sandbox":
         return _cmd_research_sandbox(args)
+    if args.action == "campaign-graph":
+        return _cmd_research_campaign_graph(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1477,6 +1479,8 @@ def _cmd_research_ml_baseline(args: argparse.Namespace) -> int:
         return _cmd_research_ml_baseline(args)
     if args.action == "sandbox":
         return _cmd_research_sandbox(args)
+    if args.action == "campaign-graph":
+        return _cmd_research_campaign_graph(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1533,6 +1537,47 @@ def _cmd_research_sandbox(args: argparse.Namespace) -> int:
     print(
         "This is a research measurement, not a detection verdict. "
         "Events are observed only — nothing is blocked."
+    )
+    return EXIT_OK
+
+
+def _cmd_research_campaign_graph(args: argparse.Namespace) -> int:
+    """Build a correlation graph from research events.
+
+    Links file → process → outbound connection → another file → startup
+    entry to detect campaigns. Reports clusters with heuristic risk
+    scores — never a detection verdict.
+    """
+    window_days = args.days
+
+    from .research.campaign_graph import build_campaign_graph, example_events, result_to_dict
+
+    # For now, use example events as a demo. In the future this will read
+    # from the state DB / watcher events.
+    events = example_events()
+
+    result = build_campaign_graph(events, window_days=window_days)
+
+    if args.json:
+        _emit(result_to_dict(result))
+        return EXIT_OK
+
+    print(f"Campaign graph: {result.node_count} nodes, {result.edge_count} edges")
+    print(f"  Clusters: {result.cluster_count}")
+    print(f"  Window: {result.window_days} days")
+    print("")
+    if result.clusters:
+        print("Campaign clusters (by risk score):")
+        for c in result.clusters:
+            print(f"  [{c.risk_score:.2f}] {c.node_count} nodes, {c.edge_count} edges")
+            for n in c.nodes:
+                print(f"    - {n.type}: {n.label}")
+    else:
+        print("  No clusters found.")
+    print("")
+    print(
+        "This is a research measurement, not a detection verdict. "
+        "Risk scores are heuristic — nothing is blocked."
     )
     return EXIT_OK
 
@@ -2077,6 +2122,21 @@ def build_parser() -> argparse.ArgumentParser:
     research_sandbox.add_argument("--json", action="store_true")
     research_sandbox.set_defaults(
         func=cmd_research, action="sandbox"
+    )
+
+    research_campaign = research_sub.add_parser(
+        "campaign-graph",
+        help="Build correlation graph of file → process → connection → startup events.",
+    )
+    research_campaign.add_argument(
+        "--days",
+        type=int,
+        default=7,
+        help="Time window in days for graph events (default: 7).",
+    )
+    research_campaign.add_argument("--json", action="store_true")
+    research_campaign.set_defaults(
+        func=cmd_research, action="campaign-graph"
     )
 
     inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")

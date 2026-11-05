@@ -2,7 +2,7 @@
 project: myav
 created: 2026-11-01
 current_sprint: research-01
-current_ticket: T031
+current_ticket: none
 tier: AES-heavy
 ---
 
@@ -15,13 +15,12 @@ tier: AES-heavy
 
 | ID | Title | Phase |
 |----|-------|-------|
-| T031 | Lightweight sandbox — sufficient observation time | build |
+| T032 | Campaign correlation graphs — beyond isolated files | build |
 
 ## Backlog
 
 | ID | Title | Priority | Notes |
 |----|-------|----------|-------|
-| T032 | Campaign correlation graphs — beyond isolated files | medium | Research-01 |
 | T033 | Supply chain and operational honesty dashboard | medium | Research-01 |
 
 ## Review
@@ -66,6 +65,7 @@ tier: AES-heavy
 | T029 | Purpose-specific behavioural detection (research track) | `pytest` (365 pass), `ruff` clean, coverage 92.08% |
 | T030 | ML with scientific rigour — EMBER baseline + temporal evaluation (research track) | `pytest` (381 pass), `ruff` clean, coverage 92.06% |
 | T031 | Lightweight sandbox — sufficient observation time (research track) | `pytest` (396 pass), `ruff` clean, coverage 92.06% |
+| T032 | Campaign correlation graphs — beyond isolated files (research track) | `pytest` (405 pass), `ruff` clean, coverage 92.06% |
 
 ## Blocked
 
@@ -95,3 +95,4 @@ tier: AES-heavy
 | 2026-11-03 | T029 | Purpose-specific behavioural detection: `myav research behaviour-detect <path>` runs heuristic detectors for ransomware (canary/bulk-rename), fileless/LOTL (obfuscated scripts) and documents (macros). Key lesson: heuristic detectors have false positives — results are alerts only, labelled as research, never shipped as Core protection.
 | 2026-11-03 | T030 | ML with scientific rigour: `myav research ml-baseline --train-dir <dir> --test-dir <dir> [--temporal]` trains a logistic regression on EMBER-style features with temporal evaluation, reports FPR/FNR/precision/recall/confusion matrix — never bare accuracy. Key lesson: `EvaluationResult.to_dict()` must include `"command"` key for JSON output consistency with other research commands.
 | 2026-11-03 | T031 | Lightweight sandbox: `myav research sandbox <file> [--duration N]` executes a file in isolation with resource limits, monitors process spawns/file modifications/autostart changes, detects sandbox evasion (timing checks, VM artifacts, user interaction requirements), reports behavioural timeline. Key lesson: sandbox must apply resource limits (RLIMIT_AS, RLIMIT_CPU, RLIMIT_FSIZE, RLIMIT_NPROC) to prevent escape or denial of service.
+| 2026-11-05 | T032 | Campaign correlation graphs: `myav research campaign-graph [--days N]` builds a graph linking file → process → connection → startup entry, reports clusters with heuristic risk scores. Key lesson: connected-component analysis on a small event graph is straightforward; the challenge is populating the graph from real watcher/scheduler events rather than example data.

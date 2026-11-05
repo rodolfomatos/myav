@@ -936,6 +936,36 @@ def test_research_sandbox_not_a_file(fake, capsys) -> None:
     assert cli.main(["research", "sandbox", "/nonexistent/path"]) == 2
 
 
+# ------------------------------------------------------------------- research campaign-graph
+
+
+def test_research_campaign_graph_default(fake, capsys) -> None:
+    assert cli.main(["research", "campaign-graph"]) == 0
+    out = capsys.readouterr().out
+    assert "Campaign graph:" in out
+    assert "nodes" in out
+    assert "edges" in out
+    assert "Clusters:" in out
+
+
+def test_research_campaign_graph_json(fake, capsys) -> None:
+    assert cli.main(["research", "campaign-graph", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "research-campaign-graph"
+    assert "node_count" in payload
+    assert "edge_count" in payload
+    assert "cluster_count" in payload
+    assert "nodes" in payload
+    assert "edges" in payload
+    assert "clusters" in payload
+
+
+def test_research_campaign_graph_days(fake, capsys) -> None:
+    assert cli.main(["research", "campaign-graph", "--days", "30"]) == 0
+    out = capsys.readouterr().out
+    assert "Window: 30 days" in out
+
+
 # ----------------------------------------------------------------------- quarantine
 
 
