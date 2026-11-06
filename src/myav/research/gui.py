@@ -18,10 +18,45 @@ Nothing ships as protection: GUI is a frontend over existing CLI commands.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
+from pathlib import Path
+
+# --------------------------------------------------------------------------- helpers
+
+def _find_myav_binary() -> Path:
+    """Return the path to the myav executable.
+
+    Look in order:
+    1. MYAV_BIN environment variable
+    2. <repo_root>/bin/myav (relative to this file)
+    3. 'myav' on PATH
+    """
+    env = os.environ.get("MYAV_BIN")
+    if env:
+        return Path(env)
+
+    here = Path(__file__).resolve()
+    # src/myav/research/gui.py -> /opt/myav/src/myav/research/gui.py
+    # parents[3] = /opt/myav
+    repo_root = here.parents[3]
+    candidate = repo_root / "bin" / "myav"
+    if candidate.exists():
+        return candidate
+
+    which = shutil.which("myav")
+    if which:
+        return Path(which)
+
+    # Fallback: hope it's on PATH
+    return Path("myav")
+
+
+MYAV_BIN = _find_myav_binary()
 
 
 class MyavGUI(tk.Tk):
@@ -305,7 +340,7 @@ class MyavGUI(tk.Tk):
     def _scan_thread(self, args: list[str]) -> None:
         try:
             proc = subprocess.Popen(
-                ["myav"] + args,
+                [str(MYAV_BIN)] + args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -342,7 +377,7 @@ class MyavGUI(tk.Tk):
             self.quarantine_tree.delete(item)
         try:
             proc = subprocess.run(
-                ["myav", "quarantine", "list"],
+                [str(MYAV_BIN), "quarantine", "list"],
                 capture_output=True, text=True, timeout=30,
             )
             lines = proc.stdout.splitlines()
@@ -372,7 +407,7 @@ class MyavGUI(tk.Tk):
             return
         try:
             proc = subprocess.run(
-                ["myav", "quarantine", "restore", qid],
+                [str(MYAV_BIN), "quarantine", "restore", qid],
                 capture_output=True, text=True, timeout=30,
             )
             if proc.returncode == 0:
@@ -394,7 +429,7 @@ class MyavGUI(tk.Tk):
             return
         try:
             proc = subprocess.run(
-                ["myav", "quarantine", "purge", qid, "--yes"],
+                [str(MYAV_BIN), "quarantine", "purge", qid, "--yes"],
                 capture_output=True, text=True, timeout=30,
             )
             if proc.returncode == 0:
@@ -411,7 +446,7 @@ class MyavGUI(tk.Tk):
         self.reports_list.delete(0, tk.END)
         try:
             proc = subprocess.run(
-                ["myav", "report", "--list"],
+                [str(MYAV_BIN), "report", "--list"],
                 capture_output=True, text=True, timeout=30,
             )
             for line in proc.stdout.splitlines():
@@ -429,7 +464,7 @@ class MyavGUI(tk.Tk):
         report_path = self.reports_list.get(selection[0])
         try:
             proc = subprocess.run(
-                ["myav", "report", "--path", report_path],
+                [str(MYAV_BIN), "report", "--path", report_path],
                 capture_output=True, text=True, timeout=30,
             )
             self.report_output.delete("1.0", tk.END)
@@ -442,7 +477,7 @@ class MyavGUI(tk.Tk):
     def _populate_config(self) -> None:
         try:
             proc = subprocess.run(
-                ["myav", "config", "show"],
+                [str(MYAV_BIN), "config", "show"],
                 capture_output=True, text=True, timeout=30,
             )
             config = json.loads(proc.stdout)
@@ -481,7 +516,7 @@ class MyavGUI(tk.Tk):
 
         try:
             subprocess.run(
-                ["myav", "config", "set-vt-key"],
+                [str(MYAV_BIN), "config", "set-vt-key"],
                 capture_output=True, text=True, timeout=30,
                 input=self.vt_key_var.get(),
             )
@@ -518,7 +553,7 @@ class MyavGUI(tk.Tk):
         def _run() -> None:
             try:
                 proc = subprocess.Popen(
-                    ["myav", "research"] + args,
+                    [str(MYAV_BIN), "research"] + args,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,

@@ -102,7 +102,7 @@ log "2/6 — Installing ClamAV and YARA"
 # rules for scripts, webshells and miner configs. Both are scanning engines; the
 # watcher that calls them is plain Python and needs no root.
 install_debian() {
-  local packages=(clamav clamav-daemon clamav-freshclam yara)
+  local packages=(clamav clamav-daemon clamav-freshclam yara python3-tk)
   local missing=()
   for pkg in "${packages[@]}"; do
     if [ "$FORCE" -eq 1 ] || ! dpkg -s "$pkg" >/dev/null 2>&1; then
@@ -119,14 +119,14 @@ install_debian() {
 }
 
 install_fedora() {
-  local packages=(clamav clamav-update clamd yara)
+  local packages=(clamav clamav-update clamd yara python3-tkinter)
   note "packages: ${packages[*]}"
   run dnf install -y "${packages[@]}"
 }
 
 install_arch() {
-  note "packages: clamav yara"
-  run pacman -S --needed --noconfirm clamav yara
+  note "packages: clamav yara tk"
+  run pacman -S --needed --noconfirm clamav yara tk
 }
 
 install_macos() {
