@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import stat
 from pathlib import Path
 
@@ -964,6 +965,50 @@ def test_research_campaign_graph_days(fake, capsys) -> None:
     assert cli.main(["research", "campaign-graph", "--days", "30"]) == 0
     out = capsys.readouterr().out
     assert "Window: 30 days" in out
+
+
+# ------------------------------------------------------------------- research honesty-dashboard
+
+
+def test_research_honesty_dashboard_no_db(fake, tmp_path, capsys) -> None:
+    assert cli.main(["research", "honesty-dashboard"]) == 0
+    out = capsys.readouterr().out
+    assert "myav honesty dashboard" in out
+    assert "Confidence level: none" in out
+
+
+def test_research_honesty_dashboard_json(fake, tmp_path, capsys) -> None:
+    db_path = tmp_path / "state.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "CREATE TABLE scans (id INTEGER PRIMARY KEY, ts TEXT, path TEXT, "
+        "size INTEGER, sha256 TEXT, verdict TEXT, quarantine_id TEXT, "
+        "engines TEXT, degraded TEXT, kind TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE quarantines (id TEXT PRIMARY KEY, ts TEXT, "
+        "original_path TEXT, sha256 TEXT, size INTEGER, mode INTEGER, "
+        "mtime REAL, tag TEXT, reason TEXT, evidence TEXT, state TEXT, "
+        "payload TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO scans (ts, path, size, sha256, verdict, "
+        "quarantine_id, engines, degraded, kind) VALUES (?,?,?,?,?,?,?,?,?)",
+        ("2026-11-01T10:00:00+00:00", "/tmp/test.bin", 100, "a" * 64,
+         "CLEAN", None, "[]", "[]", "manual"),
+    )
+    conn.commit()
+    conn.close()
+
+    assert cli.main(
+        ["research", "honesty-dashboard", "--state-db", str(db_path), "--json"]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "research-honesty-dashboard"
+    assert "metrics" in payload
+    assert "confidence" in payload
+    assert "sbom" in payload
+    assert "signing" in payload
 
 
 # ----------------------------------------------------------------------- quarantine

@@ -1,145 +1,454 @@
 {
+  "$schema": "http://cyclonedx.org/schema/cyclonedx-1.4.schema.json",
   "bomFormat": "CycloneDX",
-  "specVersion": "1.5",
-  "serialNumber": "urn:uuid:6c1c2f9e-6f2a-4f7a-9d1e-2a0f7b3c4d51",
+  "specVersion": "1.4",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-11-01T00:00:00Z",
-    "tools": [
-      {
-        "vendor": "myav",
-        "name": "manual-sbom",
-        "version": "0.1.0"
-      }
-    ],
+    "timestamp": "2026-11-06T18:12:14.589972+00:00",
     "component": {
       "type": "application",
-      "bom-ref": "pkg:generic/myav@0.1.0",
       "name": "myav",
-      "version": "0.1.0",
-      "description": "Local-first antivirus: ClamAV + YARA + optional VirusTotal hash lookups, with reversible quarantine.",
-      "licenses": [
-        { "license": { "id": "Apache-2.0" } }
-      ],
-      "purl": "pkg:generic/myav@0.1.0"
+      "version": "0.1.0"
     }
   },
   "components": [
     {
-      "type": "library",
-      "bom-ref": "pkg:pypi/watchdog@5.0.3",
-      "name": "watchdog",
-      "version": ">=3.0,<6.0",
-      "description": "Filesystem event monitoring (inotify, FSEvents, ReadDirectoryChangesW).",
-      "licenses": [{ "license": { "id": "Apache-2.0" } }],
-      "purl": "pkg:pypi/watchdog",
-      "scope": "required"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:pypi/tomli@2.2.1",
-      "name": "tomli",
-      "version": ">=2.0,<3.0",
-      "description": "TOML parser for Python < 3.11. Replaced by stdlib tomllib on 3.11+.",
-      "licenses": [{ "license": { "id": "MIT" } }],
-      "purl": "pkg:pypi/tomli",
-      "scope": "required",
-      "properties": [
-        { "name": "myav:python-marker", "value": "python_version < '3.11'" }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:pypi/yara-python",
-      "name": "yara-python",
-      "version": "optional, detected at runtime",
-      "description": "Optional in-process YARA binding. Falls back to the yara CLI.",
-      "licenses": [{ "license": { "id": "Apache-2.0" } }],
-      "purl": "pkg:pypi/yara-python",
-      "scope": "optional"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:pypi/pytest",
-      "name": "pytest",
-      "version": "development only",
-      "licenses": [{ "license": { "id": "MIT" } }],
-      "purl": "pkg:pypi/pytest",
-      "scope": "excluded"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:pypi/pytest-cov",
-      "name": "pytest-cov",
-      "version": "development only",
-      "licenses": [{ "license": { "id": "MIT" } }],
-      "purl": "pkg:pypi/pytest-cov",
-      "scope": "excluded"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:pypi/ruff",
-      "name": "ruff",
-      "version": "development only",
-      "licenses": [{ "license": { "id": "MIT" } }],
-      "purl": "pkg:pypi/ruff",
-      "scope": "excluded"
+      "type": "application",
+      "name": "Python",
+      "version": "3.12.3",
+      "purl": "pkg:generic/python@3.12.3"
     },
     {
       "type": "application",
-      "bom-ref": "pkg:generic/clamav",
-      "name": "ClamAV",
-      "version": "system package, 1.5.x expected on Ubuntu 22.04",
-      "description": "Signature antivirus engine invoked as clamscan/clamdscan. Not embedded.",
-      "licenses": [{ "license": { "id": "GPL-2.0-only" } }],
-      "scope": "required",
-      "externalReferences": [
-        { "type": "website", "url": "https://www.clamav.net/" }
+      "name": "myav",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "5dfd6472d8b131fb7478a02895c581533fb5bbfba79d504e3a9f1db7868e58d2"
+        }
       ]
     },
     {
-      "type": "application",
-      "bom-ref": "pkg:generic/yara",
-      "name": "YARA",
-      "version": "system package, 4.1.3 expected on Ubuntu 22.04",
-      "description": "Pattern matching engine invoked as yara/yarac. Not embedded.",
-      "licenses": [{ "license": { "id": "BSD-3-Clause" } }],
-      "scope": "required",
-      "externalReferences": [
-        { "type": "website", "url": "https://virustotal.github.io/yara/" }
+      "type": "library",
+      "name": "myav.__init__",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.__init__@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "762d5d16727f84b4e743d67283c832d353588239c911b0baa9d7373c871c03e8"
+        }
       ]
     },
     {
-      "type": "data",
-      "bom-ref": "pkg:generic/signature-base",
-      "name": "Neo23x0/signature-base",
-      "version": "pinned commit, fetched at runtime",
-      "description": "Optional YARA rule pack. Not vendored, not redistributed. Downloaded only after the user accepts DRL 1.1.",
-      "licenses": [{ "license": { "name": "Detection Rule License 1.1" } }],
-      "scope": "optional",
-      "externalReferences": [
-        { "type": "vcs", "url": "https://github.com/Neo23x0/signature-base" }
-      ],
-      "properties": [
-        { "name": "myav:provenance", "value": "rules/PROVENANCE.json records commit and archive SHA-256" }
+      "type": "library",
+      "name": "myav.__main__",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.__main__@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c50a3859240dcf5af9d0ec7fdbca8ae65d26ca88bf55a80e9269e33fcf35a8ef"
+        }
       ]
-    }
-  ],
-  "dependencies": [
+    },
     {
-      "ref": "pkg:generic/myav@0.1.0",
-      "dependsOn": [
-        "pkg:pypi/watchdog@5.0.3",
-        "pkg:pypi/tomli@2.2.1",
-        "pkg:generic/clamav",
-        "pkg:generic/yara"
+      "type": "library",
+      "name": "myav.archive",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.archive@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ee5d939d7a9637a7253237a42e085bc2935a48ff025c33c7b903c3449ed56b4b"
+        }
       ]
-    }
-  ],
-  "properties": [
+    },
     {
-      "name": "myav:notes",
-      "value": "This SBOM is maintained by hand and committed to the repository. It is not yet generated per release; see docs/DEPENDENCIES.md section 8."
+      "type": "library",
+      "name": "myav.bootwatch",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.bootwatch@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8551acabf0912102d675970292115a4b4870451f9a85335a0f519af856a60a79"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.cli",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.cli@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c72d64fcf1360928a8aa69ceb633fe8b2d463582ca2669ae7963d39df796f7ab"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.config",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.config@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6a2354708b9a5b22ad8afa0aa6a794b17e150dc934cd25ff2e9ab62967e365d5"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.engine",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.engine@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "c4ebe31f48c002c34b5b09d64cb35e94bef3d032f6753d2dd42e7fd0e84697e5"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.__init__",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.__init__@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2023578dba7ca160d4857e356afb07325a402df73e7af9bb0cdb44929b9127c8"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.clamav",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.clamav@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1041e7496c386e43e2722251e59fa822e189989ffb96c4a754ee9fd7b27040c6"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.virustotal",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.virustotal@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9a3be61e8285cd3bc50f426d6c5c50a8aebcefadf2f97680502a5399811677b9"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.yara",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.yara@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ee2f891e30fe1ffc8e389c5ca9ee4436676020a3659ff9124a50c04813ab8075"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.hashutil",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.hashutil@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1ec2ff8401054d013d36591abffa41f872ee9a89ac6e1a95ec5fa1ed3612570d"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.paths",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.paths@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "37346a3731c51e859b67311a7aaba70144fcba6c0020e0bf4c0e13b8b35e3d64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.pipeline",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.pipeline@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "4c5e98b94ba12d80ad932c06bad06a74689b58def8beee0e8b8c1a721b02d60a"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.__init__",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.__init__@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e77f3a808038cef7e74ab61477e4aa87d9f8b702a16a2871ca73c3fad53eaf19"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.base",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.base@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8ba8adc531cec7589faf83b726f60f409656393ce8a6f34462e89fe70d8b2d92"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.progress",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.progress@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "ef1e0c3d259659dbd7a98f2d1f58e7c53a0a8b087f0081b93fd6af961d785c3b"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.quarantine",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.quarantine@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "a37853711db7b66ccaea58443e5135bbd979ba58ad6be1efae720f8fda70d645"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.report",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.report@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "54be16564d5e2a3090e8506366e73c6ed7185057f94d2a020e44ff02e7d70301"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.__init__",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.__init__@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1299ad0610d715777a5b32122a7907cf29da9a736cc97b15c454c7933e36cfc9"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.behaviour_baseline",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.behaviour_baseline@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "02d35c0f4697a485f4982c76193f685a07164b7fab87df7b26aaccface4deb19"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.behaviour_detectors",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.behaviour_detectors@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1864878c71a65856588482e9238645f745c55a99dd66ea1064f9c9466e14ced8"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.campaign_graph",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.campaign_graph@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "26dadd5f87843dc3361e7963d602ad732d38c03bc79afb6f95ce1e59818c8a2b"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.fp_baseline",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.fp_baseline@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "50a8308b4b1d14759be0f343eee46111c7696d98dafb7d57d4418ed83425c56c"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.gui",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.gui@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b2649267e6bef5b0f047313ae8d58ef1dc6f677d561e22ce1883ff9e8caf0c7f"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.honesty_dashboard",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.honesty_dashboard@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "84e4ceb700e567c5d25a0d911014891206c5c0b47d057a2fa689a65754f3bfff"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.ml_baseline",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.ml_baseline@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8ee48abeb5012f6caf8fa395e67d57e076fef8eb7d82d8c4af02e29bf0fd44dc"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.sandbox",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.sandbox@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d7ee3257ec85f25688f14e5230f730b3149d32fdc6981fa0261e6834cbc0081f"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.rules",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.rules@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "456f4276e403084633b6a2080c7fdb588757883b98febbecb96bdd0eb804394c"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.scheduler",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.scheduler@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "595957b9fa193f3f61aa81408f59d1c74758c0daf2f263991016be98c11c8777"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.selftest",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.selftest@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "bc392666c8179f96ea0de76de14e13de7dff0f2925f17282b97dfa1695fa40f4"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.state",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.state@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "14293efa7b6f864cb80ae9fc4c4400c33edc0cb3fc4293d3ab365af978fe62e6"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.util",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.util@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "18c40a139859fb165de846ac1e36c8fc0fa64f3638362147b93f4d933c049c72"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.verdict",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.verdict@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "92ce864ed6166d04887c121bc4ed7703a5f0861850629043117a6587e94300fb"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "myav.watcher",
+      "version": "0.1.0",
+      "purl": "pkg:generic/myav.watcher@0.1.0",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "e1ca033dc85d1e89d0ba01a3aba6833c1e56d776e6972a223bfc40676517f26e"
+        }
+      ]
     }
   ]
 }

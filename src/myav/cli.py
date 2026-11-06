@@ -1168,6 +1168,8 @@ def cmd_research(args: argparse.Namespace) -> int:
         return _cmd_research_campaign_graph(args)
     if args.action == "gui":
         return _cmd_research_gui(args)
+    if args.action == "honesty-dashboard":
+        return _cmd_research_honesty_dashboard(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1485,6 +1487,8 @@ def _cmd_research_ml_baseline(args: argparse.Namespace) -> int:
         return _cmd_research_campaign_graph(args)
     if args.action == "gui":
         return _cmd_research_gui(args)
+    if args.action == "honesty-dashboard":
+        return _cmd_research_honesty_dashboard(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1596,6 +1600,27 @@ def _cmd_research_gui(args: argparse.Namespace) -> int:
     from .research.gui import main as gui_main
 
     return gui_main()
+
+
+def _cmd_research_honesty_dashboard(args: argparse.Namespace) -> int:
+    """Run the honesty dashboard: compute real measured metrics, generate
+    SBOM, sign release, and report an honest confidence level.
+
+    Read-only: reads the state DB, generates SBOM, attempts signing —
+    nothing is blocked.
+    """
+    state_db = Path(args.state_db).expanduser() if args.state_db else None
+
+    from .research.honesty_dashboard import run_honesty_dashboard
+
+    result = run_honesty_dashboard(state_db, json_output=args.json)
+
+    if args.json:
+        _emit(result)
+        return EXIT_OK
+
+    # Already printed inside run_honesty_dashboard when not json.
+    return EXIT_OK
 
 
 # ------------------------------------------------------------------ system/privileged
@@ -2161,6 +2186,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     research_gui.set_defaults(
         func=cmd_research, action="gui"
+    )
+
+    research_honesty = research_sub.add_parser(
+        "honesty-dashboard",
+        help="Run honesty dashboard: real measured metrics, SBOM, signing.",
+    )
+    research_honesty.add_argument(
+        "--state-db",
+        default=None,
+        help="Path to myav state DB (default: ~/.local/state/myav/state.db).",
+    )
+    research_honesty.add_argument("--json", action="store_true")
+    research_honesty.set_defaults(
+        func=cmd_research, action="honesty-dashboard"
     )
 
     inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")
