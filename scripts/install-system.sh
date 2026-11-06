@@ -191,16 +191,18 @@ if [ "$CONFIGURE_CLAMD" -eq 1 ] && [ "$OS" = "Linux" ]; then
       note "backup already exists: /etc/clamav/clamd.conf.bak (kept untouched)"
     fi
     if [ "$APPLY" -eq 1 ]; then
-      cat > /etc/clamav/clamd.conf.d-myav <<'EOF'
-# Added by myav. Remove this file to return to the distribution defaults.
+      cat >> /etc/clamav/clamd.conf <<'EOF'
+
+# Added by myav. Remove these lines to return to the distribution defaults.
 TCPSocket 3310
 TCPAddr 127.0.0.1
 LocalSocket /run/clamav/clamd.ctl
 MaxThreads 4
+Foreground true
 EOF
-      note "wrote /etc/clamav/clamd.conf.d-myav (loopback only)"
+      note "appended myav settings to /etc/clamav/clamd.conf"
     else
-      note "WOULD WRITE: /etc/clamav/clamd.conf.d-myav (TCPSocket 3310, TCPAddr 127.0.0.1)"
+      note "WOULD APPEND: /etc/clamav/clamd.conf (TCPSocket 3310, TCPAddr 127.0.0.1)"
     fi
   else
     note "/etc/clamav/clamd.conf not found — skipping clamd configuration."
@@ -224,7 +226,13 @@ EOF
       CLAMD_BIN=""
     fi
     if [ -n "${CLAMD_BIN:-}" ]; then
-      install -d -o clamav -g clamav -m 755 /var/run/clamav 2>/dev/null || true
+      # Create socket directory with correct ownership. Do NOT silence errors:
+      # if we cannot create it, clamd will fail to start.
+      if [ "$(id -u)" -eq 0 ]; then
+        install -d -o clamav -g clamav -m 755 /var/run/clamav
+        chown clamav:clamav /var/run/clamav
+        chmod 755 /var/run/clamav
+      fi
       run runuser -u clamav -- "$CLAMD_BIN"
     fi
   fi
