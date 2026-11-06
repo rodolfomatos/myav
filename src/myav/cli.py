@@ -1166,6 +1166,8 @@ def cmd_research(args: argparse.Namespace) -> int:
         return _cmd_research_sandbox(args)
     if args.action == "campaign-graph":
         return _cmd_research_campaign_graph(args)
+    if args.action == "gui":
+        return _cmd_research_gui(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1481,6 +1483,8 @@ def _cmd_research_ml_baseline(args: argparse.Namespace) -> int:
         return _cmd_research_sandbox(args)
     if args.action == "campaign-graph":
         return _cmd_research_campaign_graph(args)
+    if args.action == "gui":
+        return _cmd_research_gui(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1580,6 +1584,18 @@ def _cmd_research_campaign_graph(args: argparse.Namespace) -> int:
         "Risk scores are heuristic — nothing is blocked."
     )
     return EXIT_OK
+
+
+def _cmd_research_gui(args: argparse.Namespace) -> int:
+    """Launch the Tkinter GUI desktop application.
+
+    The GUI is a separate process that reads the myav state DB and config
+    and serves as a front-end over the existing CLI commands. Nothing runs
+    sudo here.
+    """
+    from .research.gui import main as gui_main
+
+    return gui_main()
 
 
 # ------------------------------------------------------------------ system/privileged
@@ -2137,6 +2153,14 @@ def build_parser() -> argparse.ArgumentParser:
     research_campaign.add_argument("--json", action="store_true")
     research_campaign.set_defaults(
         func=cmd_research, action="campaign-graph"
+    )
+
+    research_gui = research_sub.add_parser(
+        "gui",
+        help="Launch the Tkinter GUI desktop application.",
+    )
+    research_gui.set_defaults(
+        func=cmd_research, action="gui"
     )
 
     inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")
