@@ -186,6 +186,49 @@ def test_run_once_quarantines_malicious(
     assert not target.exists()
 
 
+def test_watcher_blocks_malicious_on_block_on_malicious(
+    config, paths, state, platform, tmp_path, monkeypatch
+) -> None:
+    config.watcher.watch_dirs = [tmp_path / "watched"]
+    config.watcher.watch_removable = False
+    config.watcher.block_on_malicious = True
+    (tmp_path / "watched").mkdir()
+    target = tmp_path / "watched" / "bad.bin"
+    target.write_text("malware")
+
+    engines = make_engines(platform, clam=StubClam(MALICIOUS, "Test.Sig"))
+    watcher = Watcher(config, paths, state, engines, platform)
+    monkeypatch.setattr(watcher, "_obs", FakeObserver)
+
+    stats = watcher.run(once=True)
+    assert stats.scanned == 1
+    assert stats.blocked == 1
+    assert stats.outcomes[0].quarantined is not None
+    # Quarantine removed the payload; blocking is satisfied by that removal.
+    assert not target.exists()
+
+
+def test_watcher_does_not_block_without_flag(
+    config, paths, state, platform, tmp_path, monkeypatch
+) -> None:
+    config.watcher.watch_dirs = [tmp_path / "watched"]
+    config.watcher.watch_removable = False
+    config.watcher.block_on_malicious = False
+    (tmp_path / "watched").mkdir()
+    target = tmp_path / "watched" / "bad.bin"
+    target.write_text("malware")
+
+    engines = make_engines(platform, clam=StubClam(MALICIOUS, "Test.Sig"))
+    watcher = Watcher(config, paths, state, engines, platform)
+    monkeypatch.setattr(watcher, "_obs", FakeObserver)
+
+    stats = watcher.run(once=True)
+    assert stats.scanned == 1
+    assert stats.blocked == 0
+    assert stats.outcomes[0].quarantined is not None
+    assert not target.exists()
+
+
 def test_create_dirs_in_run(config, paths, state, platform, tmp_path, monkeypatch) -> None:
     missing = tmp_path / "created" / "Downloads"
     config.watcher.watch_dirs = [missing]

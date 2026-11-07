@@ -23,8 +23,8 @@ import shutil
 import subprocess
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext, ttk
 from pathlib import Path
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 # --------------------------------------------------------------------------- helpers
 

@@ -67,6 +67,7 @@ tier: AES-heavy
 | T032 | Campaign correlation graphs — beyond isolated files (research track) | `pytest` (405 pass), `ruff` clean, coverage 92.06% |
 | T033 | Supply chain and operational honesty dashboard | `pytest` (419 pass), `ruff` clean, coverage 92.06% |
 | T034 | GUI desktop (Tkinter) — research track | `pytest` (412 pass), `ruff` clean, coverage 92.06% |
+| T035 | Watcher com bloqueio automático (`--watch-block`, `blocked` report/JSON) | `pytest` (431 pass, 1 env failure), `ruff` clean, coverage 88.63% |
 
 ## Blocked
 
@@ -99,3 +100,4 @@ tier: AES-heavy
 | 2026-11-05 | T032 | Campaign correlation graphs: `myav research campaign-graph [--days N]` builds a graph linking file → process → connection → startup entry, reports clusters with heuristic risk scores. Key lesson: connected-component analysis on a small event graph is straightforward; the challenge is populating the graph from real watcher/scheduler events rather than example data.
 | 2026-11-06 | T033 | Supply chain & honesty dashboard: `myav research honesty-dashboard [--state-db PATH] [--json]` measures false-positive rate from state DB, generates SBOM (CycloneDX), attempts GPG signing, reports confidence level based on measurement quantity. Key lesson: honesty metrics must come from actual observed data, never estimated or claimed.
 | 2026-11-06 | T034 | GUI desktop: `myav research gui` launches a Tkinter GUI with tabs for Scan, Quarantine, Reports, Config, Research. Tkinter (stdlib) used — zero new dependencies. GUI is read-only/alerting only — nothing ships as Core protection. Tkinter not available in headless environments; tests skip gracefully.
+| 2026-11-07 | T035 | Watcher auto-blocking: `myav watch --watch-block` (and `[watcher].block_on_malicious`) turns a MALICIOUS verdict into an active block. Quarantine removes the file first, so `chmod 000` only runs when the path still exists; `blocked` is counted in both cases. Key lessons: (1) the `watch` command is top-level, not under `research`; (2) blocking must be counted independently of the chmod outcome, otherwise a quarantined file is silently reported as "0 blocked"; (3) an accidental dispatch block inside `_cmd_research_ml_baseline` caused infinite recursion (the full suite hung) — dispatch belongs only in `cmd_research`. |

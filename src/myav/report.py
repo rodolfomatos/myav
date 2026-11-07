@@ -31,6 +31,7 @@ class ReportContext:
     attention: list[str]
     scope: list[Path]
     quarantine_budget_bytes: int | None = None
+    blocked_count: int = 0
 
 
 def utcnow() -> datetime:
@@ -112,6 +113,14 @@ def render_report(context: ReportContext) -> str:
         add("")
         add(f"Quarantine budget: {format_bytes(total)} of {format_bytes(budget)} ({usage:.1f}%).")
     add("")
+    if context.blocked_count:
+        add("## Blocked")
+        add("")
+        add(
+            f"{context.blocked_count} file(s) were blocked (quarantined) "
+            "by the watcher due to MALICIOUS verdict."
+        )
+        add("")
 
     add("## Needs your attention")
     add("")
@@ -217,6 +226,7 @@ def build_context(
     scope: list[Path] | None = None,
     extra_attention: list[str] | None = None,
     quarantine_budget_bytes: int | None = None,
+    blocked_count: int = 0,
 ) -> ReportContext:
     signature = engines.signature_info
     yara_status = engines.yara.status()
@@ -266,4 +276,5 @@ def build_context(
         attention=extra_attention or [],
         scope=scope or [],
         quarantine_budget_bytes=quarantine_budget_bytes,
+        blocked_count=blocked_count,
     )

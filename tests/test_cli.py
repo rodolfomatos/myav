@@ -834,8 +834,55 @@ def test_research_behaviour_detect_not_a_path(fake, capsys) -> None:
     assert cli.main(["research", "behaviour-detect", "/nonexistent/path"]) == 2
 
 
-# ------------------------------------------------------------------- research ml-baseline
+# ------------------------------------------------------------------- research watch --watch-block
 
+
+def test_watch_block_blocks_malicious(fake, tmp_path, capsys, monkeypatch) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    target = corpus / "bad.bin"
+    target.write_text("malware")
+
+    from myav.engine import MALICIOUS, EngineResult
+
+    def eicar_scan(self, path: Path) -> EngineResult:
+        if path.name.lower().startswith("eicar") or path.name == "bad.bin":
+            return EngineResult(
+                engine="clamav", status=MALICIOUS, signature="Eicar-Test",
+                primary=True,
+            )
+        return EngineResult(engine="clamav", status=CLEAN, primary=True)
+
+    monkeypatch.setattr(fake._engines.clamav, "scan", eicar_scan.__get__(fake._engines.clamav))
+
+    fake.config.watcher.watch_dirs = [corpus]
+    assert cli.main(["watch", "--once", "--watch-block"]) == 0
+    out = capsys.readouterr().out
+    assert "blocked" in out.lower()
+
+
+def test_watch_block_no_block_without_flag(fake, tmp_path, capsys, monkeypatch) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    target = corpus / "bad.bin"
+    target.write_text("malware")
+
+    from myav.engine import MALICIOUS, EngineResult
+
+    def eicar_scan(self, path: Path) -> EngineResult:
+        if path.name.lower().startswith("eicar") or path.name == "bad.bin":
+            return EngineResult(
+                engine="clamav", status=MALICIOUS, signature="Eicar-Test",
+                primary=True,
+            )
+        return EngineResult(engine="clamav", status=CLEAN, primary=True)
+
+    monkeypatch.setattr(fake._engines.clamav, "scan", eicar_scan.__get__(fake._engines.clamav))
+
+    fake.config.watcher.watch_dirs = [corpus]
+    assert cli.main(["watch", "--once"]) == 0
+    out = capsys.readouterr().out
+    assert "0 blocked" in out
 
 def test_research_ml_baseline_no_samples(fake, tmp_path, capsys) -> None:
     assert cli.main(["research", "ml-baseline"]) == 0

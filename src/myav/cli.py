@@ -433,6 +433,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             state=ctx.state,
             scope=targets,
             quarantine_budget_bytes=ctx.config.quarantine.budget_bytes,
+            blocked_count=0,
         )
         _finish_report(ctx, context)
     if args.json:
@@ -501,6 +502,7 @@ def cmd_full_scan(args: argparse.Namespace) -> int:
         state=ctx.state,
         scope=existing,
         quarantine_budget_bytes=ctx.config.quarantine.budget_bytes,
+        blocked_count=0,
     )
     target = _finish_report(ctx, context)
     if args.json:
@@ -1088,7 +1090,14 @@ def cmd_watch(args: argparse.Namespace) -> int:
     ctx = make_context(create_dirs=True)
     require(ctx, Capability.WATCH_FILES, "watch")
     engines = ctx.engines()
-    watcher = Watcher(ctx.config, ctx.paths, ctx.state, engines, ctx.platform)
+    watcher = Watcher(
+        ctx.config,
+        ctx.paths,
+        ctx.state,
+        engines,
+        ctx.platform,
+        block_on_malicious=args.watch_block,
+    )
     started = _now()
     stats = watcher.run(once=args.once, create_dirs=args.create_dirs)
     outcomes = list(stats.outcomes)
@@ -1104,6 +1113,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
         if stats.dropped
         else [],
         quarantine_budget_bytes=ctx.config.quarantine.budget_bytes,
+        blocked_count=stats.blocked,
     )
     target = _finish_report(ctx, context)
     if args.json:
@@ -1116,13 +1126,17 @@ def cmd_watch(args: argparse.Namespace) -> int:
                 "scanned": stats.scanned,
                 "errors": stats.errors,
                 "dropped": stats.dropped,
+                "blocked": stats.blocked,
                 "report": str(target),
                 "results": [outcome.as_dict() for outcome in outcomes],
             }
         )
     else:
         print(f"Watched: {', '.join(display_path(root) for root in stats.roots) or 'nothing'}")
-        print(f"Scanned {stats.scanned} file(s), {stats.errors} error(s), {stats.dropped} dropped.")
+        print(
+            f"Scanned {stats.scanned} file(s), {stats.errors} error(s), "
+            f"{stats.dropped} dropped, {stats.blocked} blocked."
+        )
         if outcomes:
             _print_outcomes(outcomes)
         print(f"Report: {display_path(target)}")
@@ -1479,18 +1493,7 @@ def _cmd_research_ml_baseline(args: argparse.Namespace) -> int:
     print(f"  Precision:            {result['precision']:.2f}%")
     print(f"  Recall:               {result['recall']:.2f}%")
     print("")
-    if args.action == "ml-baseline":
-        return _cmd_research_ml_baseline(args)
-    if args.action == "sandbox":
-        return _cmd_research_sandbox(args)
-    if args.action == "campaign-graph":
-        return _cmd_research_campaign_graph(args)
-    if args.action == "gui":
-        return _cmd_research_gui(args)
-    if args.action == "honesty-dashboard":
-        return _cmd_research_honesty_dashboard(args)
-    print(f"myav: unknown research action: {args.action}", file=sys.stderr)
-    return EXIT_USAGE
+    return EXIT_OK
 
 
 def _cmd_research_sandbox(args: argparse.Namespace) -> int:
@@ -2016,6 +2019,12 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--json", action="store_true")
     watch.add_argument(
         "--quiet", action="store_true", help="Suppress progress and summary output."
+    )
+    watch.add_argument(
+        "--watch-block",
+        action="store_true",
+        default=False,
+        help="Block MALICIOUS files (chmod 000) when detected by watcher.",
     )
 
     selftest = add(

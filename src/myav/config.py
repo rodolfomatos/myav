@@ -68,6 +68,7 @@ class WatcherConfig:
     settle_seconds: float = 2.0
     workers: int = 2
     queue_size: int = 256
+    block_on_malicious: bool = False
 
 
 @dataclass
@@ -178,6 +179,7 @@ class Config:
             ("settle_seconds", float),
             ("workers", int),
             ("queue_size", int),
+            ("block_on_malicious", bool),
         ):
             value = _get(raw, "watcher", key)
             if value is not None:

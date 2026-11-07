@@ -9,6 +9,7 @@ so it can be tested without a filesystem event.
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import time
@@ -78,6 +79,7 @@ class WatcherStats:
     dropped: int = 0
     scanned: int = 0
     errors: int = 0
+    blocked: int = 0
     outcomes: list[Outcome] = field(default_factory=list)
     roots: list[Path] = field(default_factory=list)
 
@@ -114,12 +116,17 @@ class Watcher:
         state: State,
         engines: Engines,
         platform: Platform,
+        block_on_malicious: bool | None = None,
     ):
         self.config = config
         self.paths = paths
         self.state = state
         self.engines = engines
         self.platform = platform
+        self.block_on_malicious = bool(
+            block_on_malicious if block_on_malicious is not None
+            else self.config.watcher.block_on_malicious
+        )
         self.settle = SettleBuffer(config.watcher.settle_seconds)
         self.queue: queue.Queue[Path] = queue.Queue(maxsize=config.watcher.queue_size)
         self.stats = WatcherStats()
@@ -195,6 +202,21 @@ class Watcher:
                 with self._lock:
                     self.stats.scanned += 1
                     self.stats.outcomes.append(outcome)
+                # Block malicious files if configured to do so. The file is
+                # usually already removed by quarantine, so the outcome is
+                # blocked either way; chmod only when it still exists.
+                if (
+                    self.block_on_malicious
+                    and outcome.level == "MALICIOUS"
+                    and not outcome.skipped
+                ):
+                    try:
+                        if path.exists():
+                            os.chmod(path, 0o000)
+                    except OSError:
+                        pass
+                    with self._lock:
+                        self.stats.blocked += 1
             except Exception:  # noqa: BLE001 - never die on one bad file
                 self.stats.errors += 1
             finally:
