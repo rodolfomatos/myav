@@ -89,6 +89,13 @@ class QuarantineConfig:
 
 
 @dataclass
+class IntelConfig:
+    enabled: bool = False
+    max_age_hours: int = 168
+    timeout: int = 20
+
+
+@dataclass
 class Config:
     paths: Paths = field(default_factory=default_paths)
     clamav: ClamAVConfig = field(default_factory=ClamAVConfig)
@@ -98,6 +105,7 @@ class Config:
     scan: ScanConfig = field(default_factory=ScanConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
     quarantine: QuarantineConfig = field(default_factory=QuarantineConfig)
+    intel: IntelConfig = field(default_factory=IntelConfig)
     warnings: list[str] = field(default_factory=list)
 
     # ---------------------------------------------------------------- loading
@@ -209,6 +217,17 @@ class Config:
             report.retention = int(value)
         updated.report = report
 
+        intel = replace(updated.intel)
+        for key, caster in (
+            ("enabled", bool),
+            ("max_age_hours", int),
+            ("timeout", int),
+        ):
+            value = _get(raw, "intel", key)
+            if value is not None:
+                setattr(intel, key, caster(value))
+        updated.intel = intel
+
         updated.warnings = warnings + unknown_sections(raw)
         updated.validate()
         return updated
@@ -222,6 +241,10 @@ class Config:
             raise ConfigError("watcher.workers must be >= 1")
         if self.report.retention < 1:
             raise ConfigError("report.retention must be >= 1")
+        if self.intel.max_age_hours < 1:
+            raise ConfigError("intel.max_age_hours must be >= 1")
+        if self.intel.timeout < 1:
+            raise ConfigError("intel.timeout must be >= 1")
         for directory in self.watcher.watch_dirs:
             if not directory.is_absolute():
                 raise ConfigError(f"watcher.watch_dirs must be absolute: {directory}")
@@ -253,6 +276,7 @@ class Config:
             "scan": vars(self.scan),
             "report": vars(self.report),
             "quarantine": vars(self.quarantine),
+            "intel": vars(self.intel),
             "warnings": self.warnings,
         }
 
@@ -275,7 +299,7 @@ def _get(raw: dict[str, Any], section: str, key: str) -> Any:
 
 
 def unknown_sections(raw: dict[str, Any]) -> list[str]:
-    known = {"clamav", "yara", "virustotal", "watcher", "scan", "report", "quarantine"}
+    known = {"clamav", "yara", "virustotal", "watcher", "scan", "report", "quarantine", "intel"}
     return [f"unknown config section [{name}] ignored" for name in raw if name not in known]
 
 

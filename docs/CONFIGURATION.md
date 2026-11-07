@@ -210,6 +210,35 @@ watch_dirs = ["~/Downloads", "~/Desktop", "~/Documents", "~/Projects/incoming"]
 A relative path is rejected at startup. That is deliberate: a daemon’s working directory is not
 your working directory, so a relative path would watch the wrong place.
 
+### `[intel]` — offline threat-intel cache
+
+```toml
+[intel]
+enabled = false
+max_age_hours = 168
+timeout = 20
+```
+
+| Key | Default | What it means |
+|---|---|---|
+| `enabled` | `false` | When `true`, and the cache has indicators, the scanner consults the local IOC cache for an **exact SHA-256 match**. A match makes the file MALICIOUS. |
+| `max_age_hours` | `168` | Age after which a feed is considered stale in status output. It never deletes indicators automatically. |
+| `timeout` | `20` | Network timeout used by `myav intel update` when the source is an HTTP(S) URL. Scans never use the network. |
+
+The cache is populated explicitly:
+
+```text
+myav intel update --name urlhaus --source https://urlhaus.abuse.ch/downloads/csv_recent/
+myav intel import ~/misp-export.json --name misp --format misp-json
+myav intel status
+myav intel check <sha256|url|domain|ip>
+myav intel clear --yes
+```
+
+Only exact SHA-256 hits change a file verdict. URLs, domains and IPs are stored and
+reported by `myav intel check`, but they are advisory: matching them inside arbitrary
+file contents would be a heuristic with an unmeasured false-positive rate.
+
 ### `[scan]` — how a scan behaves
 
 ```toml
@@ -441,6 +470,12 @@ watch_removable = true
 settle_seconds = 2.0
 workers = 2
 queue_size = 256
+
+# Optional. Off until you import a feed and enable it.
+[intel]
+enabled = false
+max_age_hours = 168
+timeout = 20
 
 [scan]
 timeout = 60

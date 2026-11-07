@@ -17,6 +17,7 @@ from .archive import is_archive, scan_archive
 from .config import Config
 from .engine import EngineResult
 from .engines.clamav import ClamAVEngine, SignatureInfo
+from .engines.intel_engine import IntelEngine
 from .engines.virustotal import VirusTotalEngine
 from .engines.yara import YaraEngine
 from .hashutil import digests
@@ -35,6 +36,7 @@ class Engines:
     virustotal: VirusTotalEngine
     signature_info: SignatureInfo = field(default_factory=SignatureInfo)
     platform: Platform = field(default_factory=detect_platform)
+    intel: IntelEngine | None = None
 
 
 def build_engines(
@@ -48,6 +50,7 @@ def build_engines(
         virustotal=VirusTotalEngine(config.virustotal, state),
         signature_info=clam.signature_info(),
         platform=plat,
+        intel=IntelEngine(config.intel, state),
     )
 
 
@@ -136,6 +139,10 @@ def scan_file(
     if engines.virustotal.configured:
         results.append(
             _safe_engine(engines.virustotal.name, lambda: engines.virustotal.lookup(outcome.sha256))
+        )
+    if engines.intel is not None and engines.intel.configured:
+        results.append(
+            _safe_engine(engines.intel.name, lambda: engines.intel.lookup(outcome.sha256))
         )
 
     outcome.verdict = fuse(results, stale_signatures=engines.signature_info.stale)

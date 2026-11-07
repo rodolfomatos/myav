@@ -83,6 +83,24 @@ CREATE TABLE IF NOT EXISTS vt_cache (
 CREATE TABLE IF NOT EXISTS vt_requests (
     ts INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS intel_iocs (
+    ioc_type   TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    confidence INTEGER NOT NULL DEFAULT 50,
+    tags       TEXT NOT NULL DEFAULT '[]',
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    PRIMARY KEY (ioc_type, value, source)
+);
+CREATE INDEX IF NOT EXISTS idx_intel_lookup ON intel_iocs(ioc_type, value);
+CREATE TABLE IF NOT EXISTS intel_feeds (
+    name       TEXT PRIMARY KEY,
+    source     TEXT NOT NULL,
+    format     TEXT NOT NULL,
+    ioc_count  INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -399,6 +417,137 @@ class State:
         with self._connect() as conn:
             conn.execute("INSERT INTO vt_requests(ts) VALUES(?)", (now_ts(),))
             conn.execute("DELETE FROM vt_requests WHERE ts < ?", (cutoff,))
+
+    # --------------------------------------------------------- threat intel
+
+    def upsert_intel(self, iocs: Iterable[Any]) -> int:
+        """Insert or refresh indicators of compromise.
+
+        Each item may be an :class:`myav.intel.IntelIOC` or a mapping with
+        ``ioc_type``/``value``/``source``/``confidence``/``tags``. ``first_seen``
+        is preserved across updates; ``last_seen`` is refreshed.
+        """
+        stamp = now_iso()
+        rows = [_intel_row(ioc, stamp) for ioc in iocs]
+        rows = [row for row in rows if row is not None]
+        if not rows:
+            return 0
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT INTO intel_iocs"
+                "(ioc_type, value, source, confidence, tags, first_seen, last_seen)"
+                " VALUES(?,?,?,?,?,?,?) ON CONFLICT(ioc_type, value, source)"
+                " DO UPDATE SET confidence=excluded.confidence,"
+                " tags=excluded.tags, last_seen=excluded.last_seen",
+                rows,
+            )
+        return len(rows)
+
+    def lookup_intel(self, ioc_type: str, value: str) -> list[dict[str, Any]]:
+        """Return every source that published an exact indicator, best first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM intel_iocs WHERE ioc_type=? AND value=?"
+                " ORDER BY confidence DESC, source",
+                (ioc_type, value.lower()),
+            ).fetchall()
+        return [_intel_dict(row) for row in rows]
+
+    def intel_summary(self) -> dict[str, Any]:
+        """Aggregate cache statistics for ``myav intel status``."""
+        with self._connect() as conn:
+            total = conn.execute("SELECT COUNT(*) AS n FROM intel_iocs").fetchone()["n"]
+            by_type = {
+                row["ioc_type"]: row["n"]
+                for row in conn.execute(
+                    "SELECT ioc_type, COUNT(*) AS n FROM intel_iocs GROUP BY ioc_type"
+                ).fetchall()
+            }
+            sources = conn.execute(
+                "SELECT COUNT(DISTINCT source) AS n FROM intel_iocs"
+            ).fetchone()["n"]
+            feeds = conn.execute("SELECT COUNT(*) AS n FROM intel_feeds").fetchone()["n"]
+            last = conn.execute(
+                "SELECT MAX(updated_at) AS ts FROM intel_feeds"
+            ).fetchone()["ts"]
+        return {
+            "total": int(total),
+            "by_type": dict(sorted(by_type.items())),
+            "sources": int(sources),
+            "feeds": int(feeds),
+            "last_update": last,
+        }
+
+    def intel_feeds(self) -> list[dict[str, Any]]:
+        """Return every imported feed with its provenance."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM intel_feeds ORDER BY name"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_intel_feed(
+        self, *, name: str, source: str, fmt: str, ioc_count: int
+    ) -> None:
+        """Record (or refresh) the provenance of one imported feed."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO intel_feeds(name, source, format, ioc_count, updated_at)"
+                " VALUES(?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET"
+                " source=excluded.source, format=excluded.format,"
+                " ioc_count=excluded.ioc_count, updated_at=excluded.updated_at",
+                (name, source, fmt, ioc_count, now_iso()),
+            )
+
+    def clear_intel(self) -> int:
+        """Delete every cached indicator and feed. Returns the IOC count removed."""
+        with self._connect() as conn:
+            total = conn.execute("SELECT COUNT(*) AS n FROM intel_iocs").fetchone()["n"]
+            conn.execute("DELETE FROM intel_iocs")
+            conn.execute("DELETE FROM intel_feeds")
+        return int(total)
+
+
+def _intel_row(ioc: Any, stamp: str) -> tuple[Any, ...] | None:
+    if isinstance(ioc, dict):
+        ioc_type = ioc.get("ioc_type") or ioc.get("type")
+        value = ioc.get("value")
+        source = ioc.get("source")
+        confidence = ioc.get("confidence", 50)
+        tags = ioc.get("tags", [])
+    else:
+        ioc_type = getattr(ioc, "ioc_type", None)
+        value = getattr(ioc, "value", None)
+        source = getattr(ioc, "source", None)
+        confidence = getattr(ioc, "confidence", 50)
+        tags = getattr(ioc, "tags", [])
+    if not ioc_type or not value or not source:
+        return None
+    return (
+        str(ioc_type),
+        str(value).lower(),
+        str(source),
+        int(confidence),
+        json.dumps(sorted({str(tag) for tag in tags if tag})),
+        stamp,
+        stamp,
+    )
+
+
+def _intel_dict(row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        tags = json.loads(row["tags"])
+    except (TypeError, ValueError):
+        tags = []
+    return {
+        "type": row["ioc_type"],
+        "value": row["value"],
+        "source": row["source"],
+        "confidence": row["confidence"],
+        "tags": tags,
+        "first_seen": row["first_seen"],
+        "last_seen": row["last_seen"],
+    }
 
 
 def _row_to_record(row: sqlite3.Row) -> QuarantineRecord:

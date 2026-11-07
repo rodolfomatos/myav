@@ -43,6 +43,8 @@ myav report --list             list all saved reports
 myav quarantine list           what is currently quarantined
 myav quarantine restore ID     put a file back
 myav allow add PATH --reason   mark a known-good file as trusted
+myav intel update --name F --source URL   cache a threat-intel feed (opt-in)
+myav intel check INDICATOR     look up one hash/URL/domain/IP offline
 myav boot                      show startup entries and flag new ones
 myav schedules status          are the recurring jobs installed?
 ```

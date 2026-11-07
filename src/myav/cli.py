@@ -36,6 +36,7 @@ from pathlib import Path
 
 from . import __version__, bootwatch
 from .config import Config, ConfigError, write_api_key
+from .intel import SUPPORTED_FORMATS as SUPPORTED_INTEL_FORMATS
 from .paths import (
     Paths,
     UnsafeLocationError,
@@ -606,6 +607,117 @@ def cmd_notify(args: argparse.Namespace) -> int:
     print(f"[toast] {args.title}: {args.message}")
     print("(On Windows this renders as a native toast notification.)")
     return EXIT_OK
+
+
+# ----------------------------------------------------------------------------- intel
+
+
+def cmd_intel(args: argparse.Namespace) -> int:
+    """Manage the offline threat-intel cache. Scans never touch the network."""
+    from .engines.intel_engine import IntelEngine
+    from .intel import IntelError, normalise_indicator, update_from_source
+
+    ctx = make_context(create_dirs=False)
+
+    if args.action == "status":
+        payload = IntelEngine(ctx.config.intel, ctx.state).status()
+        payload["feed_list"] = ctx.state.intel_feeds()
+        if args.json:
+            _emit({"command": "intel-status", **payload})
+            return EXIT_OK
+        print(
+            f"Intel cache: {payload['ioc_count']} indicator(s) "
+            f"from {payload['sources']} source(s)"
+        )
+        if payload["by_type"]:
+            for ioc_type, count in payload["by_type"].items():
+                print(f"  {ioc_type:<8} {count}")
+        if payload["feed_list"]:
+            print(f"Feeds ({len(payload['feed_list'])}):")
+            for feed in payload["feed_list"]:
+                print(
+                    f"  {feed['name']:<20} {feed['format']:<18} "
+                    f"{feed['ioc_count']:>6} ioc(s)  {feed['updated_at']}"
+                )
+        else:
+            print("Feeds: none — run `myav intel update` or `myav intel import`.")
+        state = "enabled" if payload["enabled"] else "disabled"
+        print(f"Pipeline engine: {state} ([intel].enabled)")
+        return EXIT_OK
+
+    if args.action in ("update", "import"):
+        source = getattr(args, "source", None) or getattr(args, "path", None)
+        if not source:
+            print("myav: no feed source given", file=sys.stderr)
+            return EXIT_USAGE
+        try:
+            result = update_from_source(
+                ctx.state,
+                name=args.name,
+                source=source,
+                fmt=args.format,
+                confidence=args.confidence,
+                timeout=ctx.config.intel.timeout,
+            )
+        except IntelError as exc:
+            print(f"myav: {exc}", file=sys.stderr)
+            return EXIT_FAIL
+        if args.json:
+            _emit({"command": "intel-update", **result.to_dict()})
+            return EXIT_OK
+        print(
+            f"Imported {result.ioc_count} indicator(s) from {result.name} "
+            f"({result.format})"
+        )
+        print("Scans consult this cache offline; no network I/O happens during a scan.")
+        return EXIT_OK
+
+    if args.action == "check":
+        try:
+            ioc_type, value = normalise_indicator(args.indicator)
+        except ValueError as exc:
+            print(f"myav: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        hits = ctx.state.lookup_intel(ioc_type, value)
+        if args.json:
+            _emit(
+                {
+                    "command": "intel-check",
+                    "type": ioc_type,
+                    "value": value,
+                    "found": bool(hits),
+                    "hits": hits,
+                }
+            )
+            return EXIT_OK if hits else EXIT_FAIL
+        if not hits:
+            print(f"not found: {ioc_type} {value}")
+            return EXIT_FAIL
+        print(f"found: {ioc_type} {value}")
+        for hit in hits:
+            tags = ", ".join(hit["tags"]) if hit["tags"] else "—"
+            print(
+                f"  {hit['source']}  confidence {hit['confidence']}  "
+                f"tags: {tags}  last seen {hit['last_seen']}"
+            )
+        return EXIT_OK
+
+    if args.action == "clear":
+        if not args.yes:
+            print(
+                "myav: refusing to clear the intel cache without --yes",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+        removed = ctx.state.clear_intel()
+        if args.json:
+            _emit({"command": "intel-clear", "removed": removed})
+        else:
+            print(f"Removed {removed} cached indicator(s) and all feed records.")
+        return EXIT_OK
+
+    print(f"myav: unknown intel action: {args.action}", file=sys.stderr)
+    return EXIT_USAGE
 
 
 # ------------------------------------------------------------------------------ rules
@@ -2029,6 +2141,59 @@ def build_parser() -> argparse.ArgumentParser:
     )
     allow_remove.add_argument("--json", action="store_true")
     allow_remove.set_defaults(func=cmd_allow, action="remove")
+
+    intel = add(
+        "intel",
+        cmd_intel,
+        "Import and query offline threat-intel feeds (exact indicators only).",
+    )
+    intel_sub = intel.add_subparsers(dest="action", required=True)
+
+    intel_status = intel_sub.add_parser("status", help="Show the local IOC cache.")
+    intel_status.add_argument("--json", action="store_true")
+    intel_status.set_defaults(func=cmd_intel, action="status")
+
+    intel_update = intel_sub.add_parser(
+        "update", help="Fetch a feed from a URL or file and cache its indicators."
+    )
+    intel_update.add_argument("--name", required=True, help="Feed label recorded with each IOC.")
+    intel_update.add_argument("--source", required=True, help="HTTP(S) URL or local file.")
+    intel_update.add_argument(
+        "--format",
+        default="auto",
+        choices=sorted(SUPPORTED_INTEL_FORMATS),
+        help="Feed format (default: auto).",
+    )
+    intel_update.add_argument("--confidence", type=int, default=50)
+    intel_update.add_argument("--json", action="store_true")
+    intel_update.set_defaults(func=cmd_intel, action="update")
+
+    intel_import = intel_sub.add_parser(
+        "import", help="Import a local feed export (no network)."
+    )
+    intel_import.add_argument("path", help="Local file to import.")
+    intel_import.add_argument("--name", required=True, help="Feed label recorded with each IOC.")
+    intel_import.add_argument(
+        "--format",
+        default="auto",
+        choices=sorted(SUPPORTED_INTEL_FORMATS),
+        help="Feed format (default: auto).",
+    )
+    intel_import.add_argument("--confidence", type=int, default=50)
+    intel_import.add_argument("--json", action="store_true")
+    intel_import.set_defaults(func=cmd_intel, action="import")
+
+    intel_check = intel_sub.add_parser(
+        "check", help="Look up one indicator (exit 0 found, 1 not found)."
+    )
+    intel_check.add_argument("indicator", help="sha256, URL, domain or IP.")
+    intel_check.add_argument("--json", action="store_true")
+    intel_check.set_defaults(func=cmd_intel, action="check")
+
+    intel_clear = intel_sub.add_parser("clear", help="Delete every cached indicator.")
+    intel_clear.add_argument("--yes", action="store_true", help="Required. There is no undo.")
+    intel_clear.add_argument("--json", action="store_true")
+    intel_clear.set_defaults(func=cmd_intel, action="clear")
 
     report = add("report", cmd_report, "Print the most recent report, or list all reports.")
     report.add_argument("--list", action="store_true", help="List report files.")

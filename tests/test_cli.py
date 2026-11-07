@@ -1649,3 +1649,70 @@ def test_outcome_line_variants(tmp_path) -> None:
         path=tmp_path / "c", verdict=Verdict(level="MALICIOUS"), quarantined=record
     )
     assert "quarantined abcdefgh" in cli._outcome_line(quarantined)
+
+
+# ------------------------------------------------------------------------- intel
+
+
+def test_intel_status_empty(fake, capsys) -> None:
+    assert cli.main(["intel", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "Intel cache: 0 indicator(s)" in out
+    assert "Feeds: none" in out
+
+
+def test_intel_import_status_check_and_clear(fake, tmp_path, capsys) -> None:
+    digest = "d" * 64
+    feed = tmp_path / "feed.txt"
+    feed.write_text(f"# manual feed\n{digest}\n")
+
+    assert cli.main(["intel", "import", str(feed), "--name", "manual"]) == 0
+    assert "Imported 1 indicator(s)" in capsys.readouterr().out
+
+    assert cli.main(["intel", "status", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "intel-status"
+    assert payload["ioc_count"] == 1
+    assert payload["by_type"] == {"sha256": 1}
+    assert payload["feed_list"][0]["name"] == "manual"
+
+    assert cli.main(["intel", "check", digest.upper()]) == 0
+    assert "found: sha256" in capsys.readouterr().out
+
+    assert cli.main(["intel", "check", "https://absent.example/x", "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["found"] is False
+    assert payload["hits"] == []
+
+    assert cli.main(["intel", "clear"]) == 2
+    assert "without --yes" in capsys.readouterr().err
+
+    assert cli.main(["intel", "clear", "--yes", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["removed"] == 1
+
+
+def test_intel_update_from_local_file(fake, tmp_path, capsys) -> None:
+    digest = "e" * 64
+    feed = tmp_path / "feed.txt"
+    feed.write_text(f"{digest}\n")
+
+    assert cli.main(
+        ["intel", "update", "--name", "local", "--source", str(feed), "--json"]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "intel-update"
+    assert payload["ioc_count"] == 1
+    assert payload["format"] == "text"
+
+
+def test_intel_update_missing_source_fails(fake, capsys) -> None:
+    assert cli.main(
+        ["intel", "update", "--name", "x", "--source", "/nonexistent/feed.txt"]
+    ) == 1
+    assert "could not read" in capsys.readouterr().err
+
+
+def test_intel_check_rejects_invalid_indicator(fake, capsys) -> None:
+    assert cli.main(["intel", "check", "not an indicator"]) == 2
+    assert "unsupported indicator" in capsys.readouterr().err

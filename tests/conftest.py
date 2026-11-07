@@ -143,6 +143,7 @@ def make_engines(
     clam: StubClam | None = None,
     yara: StubYara | None = None,
     vt: StubVirusTotal | None = None,
+    intel=None,
 ) -> Engines:
     clam = clam or StubClam()
     return Engines(
@@ -151,6 +152,7 @@ def make_engines(
         virustotal=vt or StubVirusTotal(),
         signature_info=clam.signature_info(),
         platform=platform,
+        intel=intel,
     )
 
 
