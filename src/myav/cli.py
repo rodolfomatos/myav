@@ -1497,12 +1497,13 @@ def _cmd_research_ml_baseline(args: argparse.Namespace) -> int:
 
 
 def _cmd_research_sandbox(args: argparse.Namespace) -> int:
-    """Run a file in a lightweight sandbox for observation.
+    """Run a file in a sandbox for observation.
 
     Read-only: executes the file with resource limits and monitors
     process spawns, file modifications, network connections and
-    autostart changes. Reports a behavioural timeline — not a verdict.
-    Never blocks.
+    autostart changes. With ``--syscalls`` it also traces file/process/network
+    syscalls and flags mass encryption, mass deletion and evasion patterns.
+    Reports a behavioural timeline — not a verdict. Never blocks.
     """
     target = Path(args.path).expanduser()
     if not target.exists():
@@ -1517,6 +1518,7 @@ def _cmd_research_sandbox(args: argparse.Namespace) -> int:
     result = run_in_sandbox(
         target,
         duration_seconds=args.duration,
+        use_syscalls=args.syscalls,
     )
 
     if args.json:
@@ -1529,7 +1531,21 @@ def _cmd_research_sandbox(args: argparse.Namespace) -> int:
     print(f"  Exit code: {result.exit_code}")
     print(f"  Events: {result.event_count}")
     print(f"  Evasions: {result.evasion_count}")
+    print(f"  Findings: {result.finding_count}")
     print("")
+    if result.syscalls is not None:
+        s = result.syscalls
+        print("Syscall summary:")
+        print(f"  Total syscalls: {s.total_syscalls}")
+        print(f"  Files written:  {len(s.unique_files_written)}")
+        print(f"  Renames:        {len(s.renames)}")
+        print(f"  Unlinks:        {len(s.unlinks)}")
+        print(f"  Execs:          {len(s.execs)}")
+        print(f"  Connects:       {len(s.connects)}")
+        print("")
+    elif args.syscalls:
+        print("Syscall summary: unavailable (strace missing or failed).")
+        print("")
     if result.events:
         print("Behavioural timeline:")
         for e in result.events:
@@ -1544,6 +1560,15 @@ def _cmd_research_sandbox(args: argparse.Namespace) -> int:
             print(f"  [{ev.severity}] {ev.type}: {ev.description}")
     else:
         print("  No sandbox evasion indicators.")
+    print("")
+    if result.findings:
+        print("Behavioural findings:")
+        for finding in result.findings:
+            print(f"  [{finding.severity}] {finding.kind}: {finding.description}")
+            if finding.detail:
+                print(f"      {finding.detail}")
+    else:
+        print("  No behavioural findings.")
     print("")
     print(
         "This is a research measurement, not a detection verdict. "
@@ -2168,6 +2193,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=30.0,
         help="Observation window in seconds (default: 30.0).",
+    )
+    research_sandbox.add_argument(
+        "--syscalls",
+        action="store_true",
+        default=False,
+        help="Trace file/process/network syscalls with strace (opt-in).",
     )
     research_sandbox.add_argument("--json", action="store_true")
     research_sandbox.set_defaults(

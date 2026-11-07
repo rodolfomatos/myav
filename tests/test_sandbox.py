@@ -11,6 +11,8 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
+
 from myav.research.sandbox import (
     EvasionIndicator,
     SandboxEvent,
@@ -23,6 +25,7 @@ from myav.research.sandbox import (
     run_in_sandbox,
     shannon_entropy,
 )
+from myav.research.syscall_monitor import Finding, SyscallSummary, strace_available
 
 
 def test_shannon_entropy() -> None:
@@ -157,6 +160,10 @@ def test_result_to_dict() -> None:
     assert d["has_evasions"] is True
     assert len(d["events"]) == 1
     assert len(d["evasions"]) == 1
+    assert d["syscalls"] is None
+    assert d["finding_count"] == 0
+    assert d["has_findings"] is False
+    assert d["findings"] == []
 
 
 def test_run_in_sandbox_json_serializable(tmp_path: Path) -> None:
@@ -184,3 +191,60 @@ def test_sandbox_respects_duration(tmp_path: Path) -> None:
     result = run_in_sandbox(script, duration_seconds=10.0)
     assert result.duration_seconds < 10.0  # Should exit quickly
     assert result.exit_code == 42
+
+
+def test_sandbox_result_exposes_findings() -> None:
+    finding = Finding(
+        kind="ransomware_mass_encryption",
+        severity="high",
+        description="mass writes",
+    )
+    result = SandboxResult(
+        target="/tmp/test",
+        duration_seconds=1.0,
+        timeout_killed=False,
+        syscalls=SyscallSummary(syscall_counts={"openat": 3}),
+        findings=[finding],
+    )
+    assert result.finding_count == 1
+    assert result.has_findings is True
+    assert result.syscalls is not None
+    payload = result_to_dict(result)
+    assert payload["syscalls"]["total_syscalls"] == 3
+    assert payload["findings"] == [finding.to_dict()]
+
+
+def test_run_in_sandbox_without_strace_degrades(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "hello.sh"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    os.chmod(script, stat.S_IRUSR | stat.S_IXUSR)
+
+    monkeypatch.setattr("myav.research.sandbox.strace_available", lambda: False)
+    result = run_in_sandbox(script, duration_seconds=2.0, use_syscalls=True)
+
+    assert result.syscalls is None
+    assert any("strace not available" in event.detail for event in result.events)
+
+
+@pytest.mark.skipif(not strace_available(), reason="strace not installed")
+def test_run_in_sandbox_with_strace_observes_writes(tmp_path: Path) -> None:
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    script = tmp_path / "writer.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'for i in 1 2 3; do echo data > "{out_dir}/f$i.txt"; done\n'
+        "exit 0\n"
+    )
+    os.chmod(script, stat.S_IRUSR | stat.S_IXUSR)
+
+    result = run_in_sandbox(script, duration_seconds=5.0, use_syscalls=True)
+
+    if result.syscalls is None:
+        pytest.skip("strace could not attach in this environment (ptrace_scope?)")
+
+    written = set(result.syscalls.files_written)
+    assert {str(out_dir / f"f{i}.txt") for i in (1, 2, 3)} <= written
+    assert any("syscall trace parsed" in event.detail for event in result.events)

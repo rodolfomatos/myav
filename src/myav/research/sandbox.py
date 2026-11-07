@@ -16,13 +16,23 @@ flags sandbox-evasion techniques (malware behaving differently in a VM).
 
 from __future__ import annotations
 
+import functools
 import math
 import os
 import resource
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .syscall_monitor import (
+    Finding,
+    SyscallSummary,
+    analyse_strace_log,
+    build_strace_command,
+    strace_available,
+)
 
 # --------------------------------------------------------------------------- entropy
 
@@ -74,6 +84,8 @@ class SandboxResult:
     events: list[SandboxEvent] = field(default_factory=list)
     evasions: list[EvasionIndicator] = field(default_factory=list)
     exit_code: int | None = None
+    syscalls: SyscallSummary | None = None
+    findings: list[Finding] = field(default_factory=list)
 
     @property
     def event_count(self) -> int:
@@ -87,15 +99,27 @@ class SandboxResult:
     def has_evasions(self) -> bool:
         return len(self.evasions) > 0
 
+    @property
+    def finding_count(self) -> int:
+        return len(self.findings)
+
+    @property
+    def has_findings(self) -> bool:
+        return len(self.findings) > 0
+
 
 # --------------------------------------------------------------------------- resource limits
 
 
-def _apply_resource_limits() -> None:
+def _apply_resource_limits(allow_fork: bool = True) -> None:
     """Apply resource limits to the sandboxed child process.
 
-    Limits memory, CPU time, file size and number of processes to prevent
-    sandbox escape or denial of service.
+    Limits memory, CPU time, file size and (optionally) the number of
+    processes to prevent sandbox escape or denial of service.
+
+    ``allow_fork`` is False when the process is launched under ``strace``:
+    strace itself must be able to fork, and a low ``RLIMIT_NPROC`` on a busy
+    machine makes the tracer fail before the target even starts.
     """
     # Limit virtual memory to 256 MiB
     resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
@@ -103,8 +127,9 @@ def _apply_resource_limits() -> None:
     resource.setrlimit(resource.RLIMIT_CPU, (300, 300))
     # Limit file size to 100 MiB
     resource.setrlimit(resource.RLIMIT_FSIZE, (100 * 1024 * 1024, 100 * 1024 * 1024))
-    # Limit number of processes
-    resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))
+    if allow_fork:
+        # Limit number of processes. Skipped under strace (see docstring).
+        resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))
 
 
 # --------------------------------------------------------------------------- detection
@@ -261,19 +286,24 @@ def run_in_sandbox(
     target: Path,
     duration_seconds: float = 30.0,
     watch_dirs: list[Path] | None = None,
+    use_syscalls: bool = False,
 ) -> SandboxResult:
     """Execute *target* in an isolated sandbox for *duration_seconds*.
 
     Read-only: the child process runs with resource limits and no network
     access (best effort). Events are recorded but nothing is modified.
 
-    Returns a SandboxResult with the behavioural timeline and evasion
-    indicators.
+    When *use_syscalls* is true **and** ``strace`` is available, the process is
+    additionally observed at syscall level; otherwise the polling observer from
+    T031 is used unchanged.
     """
     target = target.resolve()
     start_time = time.monotonic()
     end_time = start_time + duration_seconds
     events: list[SandboxEvent] = []
+    trace_path: Path | None = None
+    syscalls: SyscallSummary | None = None
+    findings: list[Finding] = []
 
     if watch_dirs is None:
         watch_dirs = [
@@ -291,17 +321,33 @@ def run_in_sandbox(
         path=str(target),
     ))
 
+    command = [str(target)]
+    if use_syscalls:
+        if strace_available():
+            fd, trace_name = tempfile.mkstemp(prefix="myav-strace-", suffix=".log")
+            os.close(fd)
+            trace_path = Path(trace_name)
+            command = build_strace_command(target, trace_path)
+        else:
+            events.append(SandboxEvent(
+                timestamp=0.0,
+                event_type="process",
+                detail="strace not available — syscall observation disabled",
+            ))
+
     exit_code: int | None = None
     timeout_killed = False
 
     try:
         proc = subprocess.Popen(
-            [str(target)],
+            command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
-            preexec_fn=_apply_resource_limits,
+            preexec_fn=functools.partial(
+                _apply_resource_limits, allow_fork=trace_path is None
+            ),
         )
 
         # Poll until duration expires or process exits
@@ -350,6 +396,28 @@ def run_in_sandbox(
     evasions.extend(_detect_vm_artifacts())
     evasions.extend(_detect_user_interaction_requirements(events))
 
+    # Parse syscall-level observations (optional, best effort).
+    if trace_path is not None:
+        try:
+            text = trace_path.read_text(encoding="utf-8", errors="replace")
+            syscalls, findings = analyse_strace_log(text, target=str(target))
+            events.append(SandboxEvent(
+                timestamp=time.monotonic() - start_time,
+                event_type="process",
+                detail=f"syscall trace parsed: {syscalls.total_syscalls} call(s)",
+            ))
+        except OSError as exc:
+            events.append(SandboxEvent(
+                timestamp=time.monotonic() - start_time,
+                event_type="process",
+                detail=f"could not read syscall trace: {exc}",
+            ))
+        finally:
+            try:
+                trace_path.unlink()
+            except OSError:
+                pass
+
     return SandboxResult(
         target=str(target),
         duration_seconds=time.monotonic() - start_time,
@@ -357,6 +425,8 @@ def run_in_sandbox(
         events=events,
         evasions=evasions,
         exit_code=exit_code,
+        syscalls=syscalls,
+        findings=findings,
     )
 
 
@@ -365,13 +435,19 @@ def detect_all_events(
     *,
     duration_seconds: float = 30.0,
     watch_dirs: list[Path] | None = None,
+    use_syscalls: bool = False,
 ) -> SandboxResult:
     """Convenience wrapper around run_in_sandbox for directory/path observation.
 
     Runs all behavioural detectors against *path*. Read-only: reads files but
     never writes, quarantines, or blocks.
     """
-    return run_in_sandbox(path, duration_seconds=duration_seconds, watch_dirs=watch_dirs)
+    return run_in_sandbox(
+        path,
+        duration_seconds=duration_seconds,
+        watch_dirs=watch_dirs,
+        use_syscalls=use_syscalls,
+    )
 
 
 # --------------------------------------------------------------------------- report
@@ -405,4 +481,8 @@ def result_to_dict(result: SandboxResult) -> dict:
             }
             for ev in result.evasions
         ],
+        "syscalls": result.syscalls.to_dict() if result.syscalls is not None else None,
+        "finding_count": result.finding_count,
+        "has_findings": result.has_findings,
+        "findings": [finding.to_dict() for finding in result.findings],
     }

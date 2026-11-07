@@ -984,6 +984,82 @@ def test_research_sandbox_not_a_file(fake, capsys) -> None:
     assert cli.main(["research", "sandbox", "/nonexistent/path"]) == 2
 
 
+def test_research_sandbox_syscalls_output(
+    fake, tmp_path, capsys, monkeypatch
+) -> None:
+    script = tmp_path / "hello.sh"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    os.chmod(script, stat.S_IRUSR | stat.S_IXUSR)
+
+    from myav.research.sandbox import SandboxResult
+    from myav.research.syscall_monitor import Finding, SyscallSummary
+
+    def fake_run(target, duration_seconds=30.0, watch_dirs=None, use_syscalls=False):
+        assert use_syscalls is True
+        return SandboxResult(
+            target=str(target),
+            duration_seconds=0.1,
+            timeout_killed=False,
+            exit_code=0,
+            syscalls=SyscallSummary(
+                syscall_counts={"openat": 2},
+                files_written=["/tmp/a", "/tmp/b"],
+            ),
+            findings=[
+                Finding(
+                    kind="ransomware_mass_encryption",
+                    severity="high",
+                    description="mass writes",
+                    detail="2 files written",
+                )
+            ],
+        )
+
+    monkeypatch.setattr("myav.research.sandbox.run_in_sandbox", fake_run)
+    assert cli.main(
+        ["research", "sandbox", str(script), "--syscalls", "--duration", "1"]
+    ) == 0
+    out = capsys.readouterr().out
+    assert "Syscall summary:" in out
+    assert "Files written:  2" in out
+    assert "Behavioural findings:" in out
+    assert "ransomware_mass_encryption" in out
+
+
+def test_research_sandbox_syscalls_json(fake, tmp_path, capsys, monkeypatch) -> None:
+    script = tmp_path / "hello.sh"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    os.chmod(script, stat.S_IRUSR | stat.S_IXUSR)
+
+    from myav.research.sandbox import SandboxResult
+    from myav.research.syscall_monitor import Finding, SyscallSummary
+
+    def fake_run(target, duration_seconds=30.0, watch_dirs=None, use_syscalls=False):
+        return SandboxResult(
+            target=str(target),
+            duration_seconds=0.1,
+            timeout_killed=False,
+            exit_code=0,
+            syscalls=SyscallSummary(syscall_counts={"openat": 1}),
+            findings=[
+                Finding(
+                    kind="evasion_ptrace",
+                    severity="high",
+                    description="ptrace observed",
+                )
+            ],
+        )
+
+    monkeypatch.setattr("myav.research.sandbox.run_in_sandbox", fake_run)
+    assert cli.main(
+        ["research", "sandbox", str(script), "--syscalls", "--json"]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["syscalls"]["total_syscalls"] == 1
+    assert payload["finding_count"] == 1
+    assert payload["findings"][0]["kind"] == "evasion_ptrace"
+
+
 # ------------------------------------------------------------------- research campaign-graph
 
 
