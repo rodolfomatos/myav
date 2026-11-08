@@ -216,6 +216,17 @@ class State:
         stats["total"] = sum(value for key, value in stats.items() if key != "total")
         return stats
 
+    def recent_scans(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return the newest scan rows first (dashboard/read-only view)."""
+        bounded = max(1, min(int(limit), 1000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, ts, path, size, sha256, verdict, quarantine_id, kind"
+                " FROM scans ORDER BY id DESC LIMIT ?",
+                (bounded,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def last_scan_ts(self, kind: str | None = None) -> str | None:
         with self._connect() as conn:
             if kind:

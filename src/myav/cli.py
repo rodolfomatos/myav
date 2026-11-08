@@ -1296,6 +1296,8 @@ def cmd_research(args: argparse.Namespace) -> int:
         return _cmd_research_gui(args)
     if args.action == "honesty-dashboard":
         return _cmd_research_honesty_dashboard(args)
+    if args.action == "web":
+        return _cmd_research_web(args)
     print(f"myav: unknown research action: {args.action}", file=sys.stderr)
     return EXIT_USAGE
 
@@ -1761,6 +1763,26 @@ def _cmd_research_honesty_dashboard(args: argparse.Namespace) -> int:
 
     # Already printed inside run_honesty_dashboard when not json.
     return EXIT_OK
+
+
+def _cmd_research_web(args: argparse.Namespace) -> int:
+    """Run the read-only web dashboard or print a snapshot.
+
+    The server binds to loopback by default; ``--allow-remote`` is required to
+    bind to a non-loopback address because there is no authentication.
+    """
+    ctx = make_context(create_dirs=True)
+
+    from .research.web_dashboard import run_server
+
+    return run_server(
+        ctx,
+        host=args.host,
+        port=args.port,
+        snapshot=args.snapshot,
+        open_browser=args.open,
+        allow_remote=args.allow_remote,
+    )
 
 
 # ------------------------------------------------------------------ system/privileged
@@ -2405,6 +2427,19 @@ def build_parser() -> argparse.ArgumentParser:
     research_honesty.add_argument("--json", action="store_true")
     research_honesty.set_defaults(
         func=cmd_research, action="honesty-dashboard"
+    )
+
+    research_web = research_sub.add_parser(
+        "web",
+        help="File‑system‑readonly web dashboard.",
+    )
+    research_web.add_argument("--host", default="127.0.0.1")
+    research_web.add_argument("--port", type=int, default=8787)
+    research_web.add_argument("--snapshot", action="store_true")
+    research_web.add_argument("--open", action="store_true")
+    research_web.add_argument("--allow-remote", action="store_true")
+    research_web.set_defaults(
+        func=cmd_research, action="web"
     )
 
     inner = add("inner", cmd_inner, "Internal quiet entry point used by schedulers.")

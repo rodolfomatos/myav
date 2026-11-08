@@ -235,6 +235,11 @@ myav intel check <sha256|url|domain|ip>
 myav intel clear --yes
 ```
 
+To inspect the cache, recent scans, quarantine and reports in a browser without
+giving any write access, run `myav research web`. The server binds to
+`127.0.0.1` by default; `--snapshot` prints the same data as JSON and
+`--allow-remote` is required for any non-loopback address.
+
 Only exact SHA-256 hits change a file verdict. URLs, domains and IPs are stored and
 reported by `myav intel check`, but they are advisory: matching them inside arbitrary
 file contents would be a heuristic with an unmeasured false-positive rate.

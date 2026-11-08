@@ -44,7 +44,11 @@ myav quarantine list           what is currently quarantined
 myav quarantine restore ID     put a file back
 myav allow add PATH --reason   mark a known-good file as trusted
 myav intel update --name F --source URL   cache a threat-intel feed (opt-in)
+myav intel import FILE --name F           import indicators from a local file (opt-in)
+myav intel status              cached indicators, feed ages and counts
 myav intel check INDICATOR     look up one hash/URL/domain/IP offline
+myav intel clear --yes         remove all cached indicators (opt-in)
+myav research web              read-only browser view of scans/quarantine/reports
 myav boot                      show startup entries and flag new ones
 myav schedules status          are the recurring jobs installed?
 ```
