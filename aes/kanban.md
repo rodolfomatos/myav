@@ -2,7 +2,7 @@
 project: myav
 created: 2026-11-01
 current_sprint: research-01
-current_ticket: T039
+current_ticket: none
 tier: AES-heavy
 ---
 
@@ -15,12 +15,13 @@ tier: AES-heavy
 
 | ID | Title | Phase |
 |----|-------|-------|
-| T039 | CI baseline — dev tooling and deterministic tests | build |
+| — | — | — |
 
 ## Backlog
 
 | ID | Title | Priority | Notes |
 |----|-------|----------|-------|
+| T040 | Ruff format drift (`ruff format --check` → 32 files) | medium | Pre-existing; decide whether to adopt the gate and reformat once. Discovered during T039. |
 
 ## Review
 
@@ -71,6 +72,7 @@ tier: AES-heavy
 | T036 | Sandbox comportamental completo (strace, ransomware, evasão) | `pytest` (453 pass, 1 env failure), `ruff` clean, coverage 88.90% |
 | T037 | Threat-intel feeds (Abuse.ch / MISP) com cache offline | `pytest` (489 pass, 1 env failure), `ruff` clean, coverage 88.32% |
 | T038 | Web dashboard local (stdlib) | `pytest` (512 pass, 4 pre-existing env/date failures), `ruff` clean, coverage 88.60% |
+| T039 | CI baseline — dev tooling and deterministic tests | CI run 42591745475 green; clean venv `make check` (516 pass, 88.61%) |
 
 ## Blocked
 
@@ -107,3 +109,4 @@ tier: AES-heavy
 | 2026-11-07 | T036 | Full behavioural sandbox: `myav research sandbox <file> --syscalls` runs the target under `strace -f -e trace=%file,%process,%network` and parses the log into `SyscallSummary`; detects mass writes/renames (`ransomware_mass_encryption`), mass deletion, `ptrace` anti-debug, fork storms and self-deletion. Key lessons: (1) `AT_FDCWD` is unquoted, so the path for `openat`/`unlinkat` is the *first* quoted argument, not the second; (2) `RLIMIT_NPROC=32` makes strace fail with `fork: Resource temporarily unavailable` on a busy machine — NPROC is skipped in syscall mode while the other limits stay; (3) the parser is pure, so the interesting behaviour is tested without ptrace permissions. |
 | 2026-11-07 | T037 | Offline threat-intel feeds: `myav intel update/import/status/check/clear` caches exact indicators in SQLite; five pure parsers (URLhaus CSV, MalwareBazaar, ThreatFox, MISP, generic text); `IntelEngine` joins the pipeline only when `[intel].enabled=true` and the cache is non-empty. Only exact SHA-256 hits change verdicts — URL/domain/IP are advisory. Key lessons: (1) public feeds are inconsistent, so every parser validates and drops bad rows instead of raising; (2) `configured` must include a cache check, otherwise an enabled-but-empty engine adds a pointless `clean` result to every scan; (3) tests inject `get` and use local files, so no test touches the network. |
 | 2026-11-08 | T038 | Read-only local web dashboard: `myav research web [--host H] [--port P] [--snapshot] [--open] [--allow-remote]` serves a stdlib `ThreadingHTTPServer` with inline HTML/CSS/JS and JSON endpoints; binds to loopback unless `--allow-remote`; no authentication and no write methods. Key lessons: (1) `QuarantineRecord` is a dataclass, not a mapping — `dict(q)` fails, use `dataclasses.asdict`; (2) a test server started with `ThreadingHTTPServer` must be shut down in a `finally` block or the suite hangs; (3) report traversal protection must reject `..`, absolute paths and non-`.md` names before touching the filesystem. |
+| 2026-11-09 | T039 | CI baseline restored: `make setup` now installs a `[dev]` extra; campaign-graph demo timestamps are relative; the missing-`yarac` test monkeypatches `shutil.which`; tests isolate `XDG_*`/`MYAV_PLATFORM`. Key lessons: (1) a setup target that installs runtime deps only turns CI into a red herring — `make lint` failed for four tickets with `ruff: not found`; (2) bare `pytest` does not put the repo root on `sys.path` while `python -m pytest` does, so entry-point parity must be tested; (3) `Config.load(home=...)` still honours ambient `XDG_*`, so GitHub runners redirected seven tests to the real runner home — reproduce CI by exporting XDG paths, not by trusting an unset local env. |

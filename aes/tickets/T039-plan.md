@@ -3,7 +3,7 @@ ticket: T039
 title: CI baseline — dev tooling and deterministic tests
 sprint: research-01
 priority: high
-status: in-progress
+status: done
 created: 2026-11-09
 ---
 
@@ -51,7 +51,7 @@ baseline: `make setup && make lint && make test` must pass from a clean checkout
 - [x] `ruff check src tests` clean; coverage ≥ 80%.
 - [x] Docs that describe contributor setup (`docs/TESTING.md`,
       `CONTRIBUTING.md`) use the dev extra.
-- [ ] CI run for the T039 commit is green.
+- [x] CI run for the T039 commit is green.
 
 ## Build & Verify Evidence
 
@@ -87,6 +87,8 @@ Evidence (2026-11-09):
 - Pre-existing, out of scope: `ruff format --check src tests` reports 32 files
   would be reformatted (repo-wide drift, not a CI gate). Recorded as backlog
   item T040.
+- CI run `42591745475`: Setup, Lint, Test, Quality gates, Upload coverage and
+  Security audit all green.
 
 ## Scope
 
