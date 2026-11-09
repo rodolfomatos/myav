@@ -45,6 +45,9 @@ baseline: `make setup && make lint && make test` must pass from a clean checkout
 - [x] `pytest` resolves `tests/test_main.py` (`from src.main import main`) under
       the bare `pytest` entry point used by the Makefile, not only under
       `python -m pytest`.
+- [x] The suite isolates `XDG_*`/`MYAV_PLATFORM` from the host, so a runner that
+      exports XDG paths cannot redirect `Config.load(home=...)` outside the
+      temporary home.
 - [x] `ruff check src tests` clean; coverage ≥ 80%.
 - [x] Docs that describe contributor setup (`docs/TESTING.md`,
       `CONTRIBUTING.md`) use the dev extra.
@@ -65,6 +68,8 @@ Diffstory:
   `shutil.which`; the production branch under test is unchanged.
 - `docs/TESTING.md`, `CONTRIBUTING.md`: contributor setup uses `.[dev]`; stale
   hard-coded pass counts removed from the expected output.
+- `tests/conftest.py`: autouse fixture removes `XDG_*` and `MYAV_PLATFORM` from
+  the test environment. This is test isolation, not a production change.
 - Intentionally untouched: `ci.yml`, `src/main.py`, the legacy `test_main.py`
   assertions, all runtime dependencies, all detection code.
 
@@ -75,6 +80,10 @@ Evidence (2026-11-09):
 - Clean venv `make test` → `516 passed`, coverage `88.61%`, no failures.
 - Clean venv `make check` → `516 passed`, `All checks passed!`.
 - Local venv `.venv/bin/python -m pytest -q` → `516 passed`, coverage `88.61%`.
+- Simulated runner environment (`XDG_*` exported to a throwaway directory):
+  before the conftest fixture `tests/test_config.py` → `7 failed, 10 passed`
+  (byte-for-byte the CI failure set); after the fixture `17 passed`, and the
+  full clean-venv `make test` → `516 passed`, coverage `88.61%`.
 - Pre-existing, out of scope: `ruff format --check src tests` reports 32 files
   would be reformatted (repo-wide drift, not a CI gate). Recorded as backlog
   item T040.
@@ -163,12 +172,19 @@ publishing, and unrelated pre-existing warnings.
 
 ## Discovered During Build
 
-- The clean-venv run exposed a third blocker: `make test` invokes bare `pytest`,
+- The clean-venv run exposed a second blocker: `make test` invokes bare `pytest`,
   which does not put the repository root on `sys.path`, so
   `tests/test_main.py` (`from src.main import main`) fails at collection with
   `ModuleNotFoundError: No module named 'src'`. It is in scope because it blocks
   the acceptance criterion; fixed by adding `"."` to the pytest `pythonpath`
   instead of weakening the test.
+- The first real CI run after the fix (42591320477) reached the test step and
+  exposed a third blocker: GitHub runners export `XDG_CONFIG_HOME`,
+  `XDG_STATE_HOME`, `XDG_DATA_HOME` and `XDG_CACHE_HOME`, and `Config.load(home=...)`
+  resolves paths through `detect_platform`, which honours them. Seven
+  `tests/test_config.py` tests read the runner's real config instead of the
+  temporary home. Reproduced locally by exporting XDG paths; fixed with an
+  autouse environment-isolation fixture in `tests/conftest.py`.
 
 ## Design Decisions
 

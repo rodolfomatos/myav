@@ -21,6 +21,20 @@ from myav.platforms import detect_platform
 from myav.state import State
 
 
+@pytest.fixture(autouse=True)
+def _isolate_environment(monkeypatch):
+    """Keep the host's XDG and platform overrides out of every test.
+
+    GitHub runners export ``XDG_CONFIG_HOME``/``XDG_STATE_HOME``/... pointing at
+    the runner's real home. ``Config.load(home=...)`` resolves through
+    ``detect_platform``, which honours those variables, so without this fixture
+    the suite reads the runner's config instead of the temporary home.
+    """
+    for name in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("MYAV_PLATFORM", raising=False)
+
+
 @pytest.fixture
 def home(tmp_path: Path) -> Path:
     home = tmp_path / "home"
