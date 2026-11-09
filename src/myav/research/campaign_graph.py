@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # --------------------------------------------------------------------------- data types
 
@@ -311,13 +311,23 @@ def result_to_dict(result: CampaignGraphResult) -> dict:
 
 
 def example_events() -> list[dict]:
-    """Return example events demonstrating a download → execute → persist campaign."""
+    """Return example events demonstrating a download → execute → persist campaign.
+
+    Timestamps are relative to "now" (anchored one hour ago) so the demo stays
+    inside the rolling window used by ``build_campaign_graph``. Fixed dates made
+    the campaign silently disappear once the 7-day window moved past them.
+    """
+    base = datetime.now(tz=timezone.utc).replace(microsecond=0) - timedelta(hours=1)
+
+    def at(offset_seconds: int) -> str:
+        return (base + timedelta(seconds=offset_seconds)).isoformat()
+
     return [
         {
             "id": "file1",
             "type": "file",
             "label": "downloader.exe",
-            "timestamp": "2026-11-01T10:00:00+00:00",
+            "timestamp": at(0),
             "attributes": {"file_type": "exe", "size": 45000},
             "edges": [
                 {"target": "proc1", "type": "spawned"},
@@ -327,7 +337,7 @@ def example_events() -> list[dict]:
             "id": "proc1",
             "type": "process",
             "label": "downloader.exe (PID 1234)",
-            "timestamp": "2026-11-01T10:00:05+00:00",
+            "timestamp": at(5),
             "attributes": {"pid": 1234, "parent": "explorer.exe"},
             "edges": [
                 {"target": "conn1", "type": "connected_to"},
@@ -338,7 +348,7 @@ def example_events() -> list[dict]:
             "id": "conn1",
             "type": "connection",
             "label": "185.220.101.44:443",
-            "timestamp": "2026-11-01T10:00:06+00:00",
+            "timestamp": at(6),
             "attributes": {"ip": "185.220.101.44", "port": 443},
             "edges": [],
         },
@@ -346,7 +356,7 @@ def example_events() -> list[dict]:
             "id": "file2",
             "type": "file",
             "label": "stage2.dll",
-            "timestamp": "2026-11-01T10:00:07+00:00",
+            "timestamp": at(7),
             "attributes": {"file_type": "dll", "size": 120000},
             "edges": [
                 {"target": "proc2", "type": "spawned"},
@@ -356,7 +366,7 @@ def example_events() -> list[dict]:
             "id": "proc2",
             "type": "process",
             "label": "rundll32.exe stage2.dll (PID 5678)",
-            "timestamp": "2026-11-01T10:00:08+00:00",
+            "timestamp": at(8),
             "attributes": {"pid": 5678, "parent": "explorer.exe"},
             "edges": [
                 {"target": "startup1", "type": "modified"},
@@ -366,7 +376,7 @@ def example_events() -> list[dict]:
             "id": "startup1",
             "type": "startup",
             "label": "HKCU\\Run\\stage2",
-            "timestamp": "2026-11-01T10:00:09+00:00",
+            "timestamp": at(9),
             "attributes": {"location": "registry", "key": "HKCU\\Run"},
             "edges": [],
         },

@@ -2,7 +2,7 @@
 project: myav
 created: 2026-11-01
 current_sprint: research-01
-current_ticket: none
+current_ticket: T039
 tier: AES-heavy
 ---
 
@@ -15,7 +15,7 @@ tier: AES-heavy
 
 | ID | Title | Phase |
 |----|-------|-------|
-| — | — | — |
+| T039 | CI baseline — dev tooling and deterministic tests | build |
 
 ## Backlog
 

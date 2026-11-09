@@ -70,8 +70,9 @@ def test_safe_extract_skips_non_rules_and_traversal(tmp_path: Path) -> None:
     assert not (tmp_path.parent / "evil.yar").exists()
 
 
-def test_compile_pack_without_yarac(tmp_path: Path) -> None:
-    result = rules.compile_pack(tmp_path, tmp_path / "cache.yarc", yarac="")
+def test_compile_pack_without_yarac(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(rules.shutil, "which", lambda name: None)
+    result = rules.compile_pack(tmp_path, tmp_path / "cache.yarc")
     assert result["compiled"] is False
     assert result["reason"] == "yarac not installed"
 

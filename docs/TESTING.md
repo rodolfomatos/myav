@@ -15,16 +15,11 @@ There are three layers:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e .
+.venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest
 ```
 
-Expected:
-
-```text
-259 passed
-Required test coverage of 80% reached. Total coverage: 93.8%
-```
+Expected: all tests pass and coverage stays above 80%.
 
 With lint:
 

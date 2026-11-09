@@ -37,8 +37,7 @@ Good first contributions:
 git clone https://github.com/rodolfomatos/myav.git
 cd myav
 python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/pip install pytest pytest-cov ruff
+.venv/bin/pip install -e ".[dev]"
 ```
 
 Run everything:

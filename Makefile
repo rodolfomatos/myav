@@ -11,7 +11,7 @@ export AES_LANGUAGE AES_LINT AES_TEST AES_FORMAT AES_BUILD AES_RUN
 
 setup:
 	@echo "Setting up $(AES_LANGUAGE)..."
-	uv sync 2>/dev/null || pip install -e .
+	@uv sync --extra dev 2>/dev/null || python -m pip install -e ".[dev]"
 
 run:
 	@$(AES_RUN)
